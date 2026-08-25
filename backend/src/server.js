@@ -1,17 +1,37 @@
 const express = require("express");
 const cors = require("cors");
+const http = require("http");
+const { Server } = require("socket.io");
 const pool = require("./config/db");
 
 const app = express();
 const PORT = 5000;
 
+// =========================
 // Middleware
+// =========================
+
 app.use(cors());
 app.use(express.json());
 
-// --------------------
-// Health Check
-// --------------------
+// =========================
+// HTTP + Socket.IO Server
+// =========================
+
+const httpServer = http.createServer(app);
+
+const io = new Server(httpServer, {
+  cors: {
+    origin: "http://localhost:3000",
+    methods: ["GET", "POST"],
+  },
+});
+
+// =========================
+// REST APIs
+// =========================
+
+// Health check
 app.get("/api/health", async (req, res) => {
   try {
     const result = await pool.query("SELECT NOW()");
@@ -31,9 +51,7 @@ app.get("/api/health", async (req, res) => {
   }
 });
 
-// --------------------
-// Create User
-// --------------------
+// Create user
 app.post("/api/users", async (req, res) => {
   const { username, email } = req.body;
 
@@ -66,9 +84,7 @@ app.post("/api/users", async (req, res) => {
   }
 });
 
-// --------------------
-// Create Room
-// --------------------
+// Create room
 app.post("/api/rooms", async (req, res) => {
   const { name, ownerId } = req.body;
 
@@ -101,9 +117,7 @@ app.post("/api/rooms", async (req, res) => {
   }
 });
 
-// --------------------
-// Save File
-// --------------------
+// Save file
 app.post("/api/files", async (req, res) => {
   const { roomId, filename, language, content } = req.body;
 
@@ -136,9 +150,7 @@ app.post("/api/files", async (req, res) => {
   }
 });
 
-// --------------------
-// Get File
-// --------------------
+// Get file
 app.get("/api/files/:id", async (req, res) => {
   const { id } = req.params;
 
@@ -169,10 +181,8 @@ app.get("/api/files/:id", async (req, res) => {
   }
 });
 
-// --------------------
-// Execute Code (Temporary)
-// --------------------
-app.post("/api/execute", async (req, res) => {
+// Temporary code execution API
+app.post("/api/execute", (req, res) => {
   const { code, language } = req.body;
 
   if (!code || !language) {
@@ -190,9 +200,51 @@ app.post("/api/execute", async (req, res) => {
   });
 });
 
-// --------------------
-// Start Server
-// --------------------
-app.listen(PORT, () => {
+// =========================
+// SOCKET.IO
+// =========================
+
+io.on("connection", (socket) => {
+  console.log("User connected:", socket.id);
+
+  // Join room
+  socket.on("join_room", (roomId) => {
+    const roomName = `room_${roomId}`;
+
+    socket.join(roomName);
+
+    console.log(`${socket.id} joined ${roomName}`);
+
+    // Tell the user that they joined successfully
+    socket.emit("room_joined", {
+      roomId,
+    });
+
+    // Tell other users in the room
+    socket.to(roomName).emit("user_joined", {
+      socketId: socket.id,
+    });
+  });
+
+  // Real-time code changes
+  socket.on("code_change", (data) => {
+    console.log("Code change received:", data);
+
+    socket.broadcast
+      .to(`room_${data.roomId}`)
+      .emit("code_change", data);
+  });
+
+  // Disconnect
+  socket.on("disconnect", () => {
+    console.log("User disconnected:", socket.id);
+  });
+});
+
+// =========================
+// START SERVER
+// =========================
+
+httpServer.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
 });

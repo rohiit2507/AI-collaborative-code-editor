@@ -11,11 +11,13 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "@y/websocket-server": "^0.1.5",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "pg": "^8.23.0",
-    "socket.io": "^4.8.3"
+    "socket.io": "^4.8.3",
+    "y-websocket": "^3.1.0"
   },
   "devDependencies": {
     "nodemon": "^3.1.14"

@@ -23,7 +23,6 @@ const httpServer = http.createServer(app);
 const io = new Server(httpServer, {
   cors: {
     origin: "http://localhost:3000",
-    methods: ["GET", "POST"],
   },
 });
 
@@ -31,7 +30,7 @@ const io = new Server(httpServer, {
 // REST APIs
 // =========================
 
-// Health check
+// Health Check
 app.get("/api/health", async (req, res) => {
   try {
     const result = await pool.query("SELECT NOW()");
@@ -51,7 +50,10 @@ app.get("/api/health", async (req, res) => {
   }
 });
 
-// Create user
+// =========================
+// USERS
+// =========================
+
 app.post("/api/users", async (req, res) => {
   const { username, email } = req.body;
 
@@ -84,7 +86,10 @@ app.post("/api/users", async (req, res) => {
   }
 });
 
-// Create room
+// =========================
+// ROOMS
+// =========================
+
 app.post("/api/rooms", async (req, res) => {
   const { name, ownerId } = req.body;
 
@@ -117,7 +122,11 @@ app.post("/api/rooms", async (req, res) => {
   }
 });
 
-// Save file
+// =========================
+// FILES
+// =========================
+
+// Create file
 app.post("/api/files", async (req, res) => {
   const { roomId, filename, language, content } = req.body;
 
@@ -146,6 +155,78 @@ app.post("/api/files", async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Failed to save file",
+    });
+  }
+});
+
+// Get File by Room
+app.get("/api/files/room/:roomId", async (req, res) => {
+  const { roomId } = req.params;
+
+  try {
+    const result = await pool.query(
+      `SELECT *
+       FROM files
+       WHERE room_id = $1
+       ORDER BY id ASC`,
+      [roomId]
+    );
+
+    res.json({
+      success: true,
+      files: result.rows,
+    });
+  } catch (error) {
+    console.error(error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to retrieve room files",
+    });
+  }
+});
+
+// Update file
+app.put("/api/files/:id", async (req, res) => {
+  const { id } = req.params;
+  const { filename, language, content } = req.body;
+
+  if (!filename || !language) {
+    return res.status(400).json({
+      success: false,
+      message: "Filename and language are required",
+    });
+  }
+
+  try {
+    const result = await pool.query(
+      `UPDATE files
+       SET filename = $1,
+           language = $2,
+           content = $3,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $4
+       RETURNING *`,
+      [filename, language, content || "", id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "File not found",
+      });
+    }
+
+    res.json({
+      success: true,
+      file: result.rows[0],
+    });
+  } catch (error) {
+    console.error(error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to update file",
     });
   }
 });
@@ -181,7 +262,10 @@ app.get("/api/files/:id", async (req, res) => {
   }
 });
 
-// Temporary code execution API
+// =========================
+// CODE EXECUTION
+// =========================
+
 app.post("/api/execute", (req, res) => {
   const { code, language } = req.body;
 
@@ -207,35 +291,20 @@ app.post("/api/execute", (req, res) => {
 io.on("connection", (socket) => {
   console.log("User connected:", socket.id);
 
-  // Join room
   socket.on("join_room", (roomId) => {
-    const roomName = `room_${roomId}`;
+    socket.join(`room_${roomId}`);
 
-    socket.join(roomName);
+    console.log(`${socket.id} joined room_${roomId}`);
 
-    console.log(`${socket.id} joined ${roomName}`);
-
-    // Tell the user that they joined successfully
     socket.emit("room_joined", {
       roomId,
     });
 
-    // Tell other users in the room
-    socket.to(roomName).emit("user_joined", {
+    socket.to(`room_${roomId}`).emit("user_joined", {
       socketId: socket.id,
     });
   });
 
-  // Real-time code changes
-  socket.on("code_change", (data) => {
-    console.log("Code change received:", data);
-
-    socket.broadcast
-      .to(`room_${data.roomId}`)
-      .emit("code_change", data);
-  });
-
-  // Disconnect
   socket.on("disconnect", () => {
     console.log("User disconnected:", socket.id);
   });

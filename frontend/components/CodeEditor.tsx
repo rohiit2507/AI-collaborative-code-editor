@@ -1,97 +1,117 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Editor from "@monaco-editor/react";
-import { socket } from "@/lib/socket";
+import Editor, { OnMount } from "@monaco-editor/react";
+import { createYjsDocument } from "@/lib/yjs";
+import { createYjsProvider } from "@/lib/yjsProvider";
 
-export default function CodeEditor() {
-  const [code, setCode] = useState('print("Hello World")');
+interface CodeEditorProps {
+  roomId: string;
+}
+
+export default function CodeEditor({ roomId }: CodeEditorProps) {
   const [language, setLanguage] = useState("python");
   const [output, setOutput] = useState("");
-  const [status, setStatus] = useState("");
-  const [onlineUsers, setOnlineUsers] = useState<string[]>([]);
+  const [status, setStatus] = useState("Connecting...");
+  const [fileId, setFileId] = useState<number | null>(null);
 
-  // =========================
-  // WEBSOCKET CONNECTION
-  // =========================
+  const [yjs] = useState(() => createYjsDocument());
+
+  const { doc, text } = yjs;
+
+  // --------------------------------------------------
+  // Yjs provider + PostgreSQL loading unified logic
+  // --------------------------------------------------
 
   useEffect(() => {
-    socket.connect();
+    const provider = createYjsProvider(roomId, doc);
 
-    socket.on("connect", () => {
-      console.log("Connected to WebSocket:", socket.id);
+    const handleStatus = (event: { status: string }) => {
+      console.log("Yjs connection:", event.status);
 
-      setStatus("Connected to server");
+      if (event.status === "connected") {
+        setStatus(`Connected to room ${roomId}`);
+      } else {
+        setStatus(`Yjs: ${event.status}`);
+      }
+    };
 
-      // Join room 1
-      socket.emit("join_room", 1);
-    });
+    const handleSynced = async () => {
+      console.log("Yjs document synchronized");
 
-    socket.on("room_joined", (data) => {
-      console.log("Joined room:", data.roomId);
-    });
+      try {
+        setStatus("Loading saved file...");
 
-    socket.on("user_joined", (data) => {
-      console.log("User joined:", data.socketId);
+        const response = await fetch(
+          `http://localhost:5000/api/files/room/${roomId}`
+        );
 
-      setOnlineUsers((users) => {
-        if (users.includes(data.socketId)) {
-          return users;
+        const data = await response.json();
+
+        if (!response.ok) {
+          setStatus(data.message || "Failed to load room file");
+          return;
         }
 
-        return [...users, data.socketId];
-      });
-    });
+        const file = data.files[0];
 
-    socket.on("disconnect", () => {
-      console.log("Disconnected from WebSocket");
+        if (!file) {
+          setFileId(null);
+          setStatus(`New room ${roomId}`);
+          return;
+        }
 
-      setStatus("Disconnected from server");
-    });
+        setFileId(file.id);
+        setLanguage(file.language);
 
-    // Receive code changes from another user
-    socket.on("code_change", (data) => {
-      setCode(data.code);
+        // Only initialize Yjs from PostgreSQL
+        // if Yjs does not already contain code.
+        if (text.length === 0 && file.content) {
+          text.insert(0, file.content);
+        }
 
-      if (data.language) {
-        setLanguage(data.language);
+        setStatus(`Loaded ${file.filename}`);
+      } catch (error) {
+        console.error(error);
+        setStatus("Could not connect to backend.");
       }
-    });
+    };
+
+    provider.on("status", handleStatus);
+    provider.on("synced", handleSynced);
 
     return () => {
-      socket.off("connect");
-      socket.off("room_joined");
-      socket.off("user_joined");
-      socket.off("disconnect");
-      socket.off("code_change");
+      provider.off("status", handleStatus);
+      provider.off("synced", handleSynced);
 
-      socket.disconnect();
+      provider.destroy();
+      doc.destroy();
     };
-  }, []);
+  }, [roomId, doc, text]);
 
-  // =========================
-  // CODE CHANGE
-  // =========================
+  // --------------------------------------------------
+  // Monaco ↔ Yjs (Dynamic Import)
+  // --------------------------------------------------
 
-  const handleCodeChange = (value: string | undefined) => {
-    const newCode = value || "";
+  const handleEditorMount: OnMount = async (editor) => {
+    const { MonacoBinding } = await import("y-monaco");
 
-    // Update local editor
-    setCode(newCode);
+    const model = editor.getModel();
 
-    // Send change to server
-    if (socket.connected) {
-      socket.emit("code_change", {
-        roomId: 1,
-        code: newCode,
-        language: language,
-      });
-    }
+    if (!model) return;
+
+    new MonacoBinding(
+      text,
+      model,
+      new Set([editor])
+    );
+
+    console.log("Monaco connected to Yjs");
   };
 
-  // =========================
-  // RUN CODE
-  // =========================
+  // --------------------------------------------------
+  // Run
+  // --------------------------------------------------
 
   const handleRun = async () => {
     setOutput("Sending code to backend...");
@@ -105,7 +125,7 @@ export default function CodeEditor() {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            code,
+            code: text.toString(),
             language,
           }),
         }
@@ -126,29 +146,32 @@ export default function CodeEditor() {
     }
   };
 
-  // =========================
-  // SAVE FILE
-  // =========================
+  // --------------------------------------------------
+  // Save
+  // --------------------------------------------------
 
   const handleSave = async () => {
     setStatus("Saving...");
 
     try {
-      const response = await fetch(
-        "http://localhost:5000/api/files",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            roomId: 1,
-            filename: "main.py",
-            language,
-            content: code,
-          }),
-        }
-      );
+      const method = fileId ? "PUT" : "POST";
+
+      const url = fileId
+        ? `http://localhost:5000/api/files/${fileId}`
+        : "http://localhost:5000/api/files";
+
+      const response = await fetch(url, {
+        method,
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          roomId: Number(roomId),
+          filename: "main.py",
+          language,
+          content: text.toString(),
+        }),
+      });
 
       const data = await response.json();
 
@@ -156,6 +179,8 @@ export default function CodeEditor() {
         setStatus(data.message || "Failed to save");
         return;
       }
+
+      setFileId(data.file.id);
 
       setStatus(
         `Saved successfully! File ID: ${data.file.id}`
@@ -165,16 +190,16 @@ export default function CodeEditor() {
     }
   };
 
-  // =========================
-  // LOAD FILE
-  // =========================
+  // --------------------------------------------------
+  // Manual Load button
+  // --------------------------------------------------
 
   const handleLoad = async () => {
     setStatus("Loading...");
 
     try {
       const response = await fetch(
-        "http://localhost:5000/api/files/1"
+        `http://localhost:5000/api/files/room/${roomId}`
       );
 
       const data = await response.json();
@@ -184,44 +209,31 @@ export default function CodeEditor() {
         return;
       }
 
-      setCode(data.file.content);
-      setLanguage(data.file.language);
+      const file = data.files[0];
 
-      setStatus("File loaded successfully!");
+      if (!file) {
+        setStatus("No saved file found for this room.");
+        return;
+      }
+
+      setFileId(file.id);
+      setLanguage(file.language);
+
+      text.delete(0, text.length);
+      text.insert(0, file.content || "");
+
+      setStatus(`Loaded ${file.filename}`);
     } catch {
       setStatus("Could not connect to backend.");
     }
   };
 
-  // =========================
+  // --------------------------------------------------
   // UI
-  // =========================
+  // --------------------------------------------------
 
   return (
     <div style={{ padding: "20px" }}>
-      {/* Online Users */}
-
-      <div style={{ marginBottom: "10px" }}>
-        <strong>Online Users:</strong>
-
-        {onlineUsers.length === 0 ? (
-          <span style={{ marginLeft: "10px" }}>
-            No other users
-          </span>
-        ) : (
-          onlineUsers.map((user) => (
-            <span
-              key={user}
-              style={{ marginLeft: "10px" }}
-            >
-              🟢 {user.slice(0, 6)}
-            </span>
-          ))
-        )}
-      </div>
-
-      {/* Toolbar */}
-
       <div
         style={{
           display: "flex",
@@ -252,21 +264,18 @@ export default function CodeEditor() {
         </button>
       </div>
 
-      {/* Connection Status */}
+      <p>
+        Room: {roomId} | File ID: {fileId ?? "New"}
+      </p>
 
       <p>{status}</p>
-
-      {/* Monaco Editor */}
 
       <Editor
         height="500px"
         language={language}
-        value={code}
-        onChange={handleCodeChange}
         theme="vs-dark"
+        onMount={handleEditorMount}
       />
-
-      {/* Output */}
 
       <div
         style={{

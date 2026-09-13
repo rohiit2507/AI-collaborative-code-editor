@@ -20,7 +20,7 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
   const { doc, text } = yjs;
 
   // --------------------------------------------------
-  // Yjs provider + PostgreSQL loading unified logic
+  // Yjs provider connection
   // --------------------------------------------------
 
   useEffect(() => {
@@ -36,58 +36,26 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
       }
     };
 
-    const handleSynced = async () => {
-      console.log("Yjs document synchronized");
-
-      try {
-        setStatus("Loading saved file...");
-
-        const response = await fetch(
-          `http://localhost:5000/api/files/room/${roomId}`
-        );
-
-        const data = await response.json();
-
-        if (!response.ok) {
-          setStatus(data.message || "Failed to load room file");
-          return;
-        }
-
-        const file = data.files[0];
-
-        if (!file) {
-          setFileId(null);
-          setStatus(`New room ${roomId}`);
-          return;
-        }
-
-        setFileId(file.id);
-        setLanguage(file.language);
-
-        // Only initialize Yjs from PostgreSQL
-        // if Yjs does not already contain code.
-        if (text.length === 0 && file.content) {
-          text.insert(0, file.content);
-        }
-
-        setStatus(`Loaded ${file.filename}`);
-      } catch (error) {
-        console.error(error);
-        setStatus("Could not connect to backend.");
+    const handleSync = (isSynced: boolean) => {
+      if (!isSynced) {
+        return;
       }
+
+      console.log("Yjs document synchronized");
+      setStatus(`Synchronized with room ${roomId}`);
     };
 
     provider.on("status", handleStatus);
-    provider.on("synced", handleSynced);
+    provider.on("sync", handleSync);
 
     return () => {
       provider.off("status", handleStatus);
-      provider.off("synced", handleSynced);
+      provider.off("sync", handleSync);
 
       provider.destroy();
       doc.destroy();
     };
-  }, [roomId, doc, text]);
+  }, [roomId, doc]);
 
   // --------------------------------------------------
   // Monaco ↔ Yjs (Dynamic Import)
@@ -121,6 +89,7 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
         "http://localhost:5000/api/execute",
         {
           method: "POST",
+          credentials: "include",
           headers: {
             "Content-Type": "application/json",
           },
@@ -162,6 +131,7 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
 
       const response = await fetch(url, {
         method,
+        credentials: "include",
         headers: {
           "Content-Type": "application/json",
         },
@@ -199,7 +169,10 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
 
     try {
       const response = await fetch(
-        `http://localhost:5000/api/files/room/${roomId}`
+        `http://localhost:5000/api/files/room/${roomId}`,
+        {
+          credentials: "include",
+        }
       );
 
       const data = await response.json();

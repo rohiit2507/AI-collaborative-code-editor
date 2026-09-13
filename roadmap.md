@@ -34,6 +34,19 @@ Docker Sandbox
 │
 ▼
 Output → Users
+
+📍 Current Implementation Tracker
+
+| Roadmap phase | Current status |
+| --- | --- |
+| Phase 1 — Basic Code Editor | ✅ Complete |
+| Phase 2 — Backend Architecture | ✅ Complete foundation |
+| Phase 3–4 — WebSocket and Collaboration | ✅ Complete foundation |
+| Phase 5 — CRDT / Conflict Resolution | ✅ Code implementation complete; authenticated browser acceptance test pending an owner room |
+| Phase 6 — Live Cursor & Presence | ⏭️ Next |
+
+Authentication and room-owner authorization were implemented early to secure the current collaboration flow. The current Yjs server verifies the JWT HTTP-only cookie and only allows the room owner to connect. Room-member roles will be expanded in the later authentication phase.
+
 🛣️ Complete Roadmap
 Phase 0 — Basic preparation
 

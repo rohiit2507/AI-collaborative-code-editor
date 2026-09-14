@@ -302,11 +302,9 @@ app.get("/api/rooms", authenticateToken, async (req, res) => {
     });
   }
 });
-
 // =========================
 // FILES
 // =========================
-
 // Create file
 app.post(
   "/api/files",
@@ -471,6 +469,48 @@ app.get(
       res.status(500).json({
         success: false,
         message: "Failed to retrieve file",
+      });
+    }
+  }
+);
+
+// Delete file
+app.delete(
+  "/api/files/:id",
+  authenticateToken,
+  async (req, res) => {
+    const { id } = req.params;
+
+    try {
+      const result = await pool.query(
+        `DELETE FROM files
+         WHERE id = $1
+           AND room_id IN (
+             SELECT id
+             FROM rooms
+             WHERE owner_id = $2
+           )
+         RETURNING *`,
+        [id, req.user.userId]
+      );
+
+      if (result.rows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: "File not found or unauthorized",
+        });
+      }
+
+      res.json({
+        success: true,
+        deletedFile: result.rows[0],
+      });
+    } catch (error) {
+      console.error(error);
+
+      res.status(500).json({
+        success: false,
+        message: "Failed to delete file",
       });
     }
   }

@@ -6,6 +6,7 @@ import type { editor as MonacoEditor } from "monaco-editor";
 import type { WebsocketProvider } from "y-websocket";
 import { createYjsDocument } from "@/lib/yjs";
 import { createYjsProvider } from "@/lib/yjsProvider";
+import { socket } from "@/lib/socket";
 
 interface CodeEditorProps {
   roomId: string;
@@ -51,6 +52,21 @@ interface Participant extends PresenceUser {
   selection: SelectionRange | null;
 }
 
+interface ChatMessage {
+  id: number;
+  room_id: number;
+  user_id: number;
+  username: string;
+  message: string;
+  created_at: string;
+}
+
+interface RoomUser {
+  socketId: string;
+  userId: number;
+  username: string;
+}
+
 const PRESENCE_COLORS = [
   "#ef4444",
   "#f97316",
@@ -73,6 +89,9 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
   const [files, setFiles] = useState<RoomFile[]>([]);
   const [activeFileId, setActiveFileId] = useState<number | null>(null);
   const [participants, setParticipants] = useState<Participant[]>([]);
+  const [roomUsers, setRoomUsers] = useState<RoomUser[]>([]);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatInput, setChatInput] = useState("");
   const [activeDocument, setActiveDocument] = useState(() => createYjsDocument());
   const providerRef = useRef<WebsocketProvider | null>(null);
   const editorRef = useRef<MonacoEditor.IStandaloneCodeEditor | null>(null);
@@ -226,9 +245,30 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
     [roomId]
   );
 
+  const loadRoomMessages = useCallback(async () => {
+    try {
+      const response = await fetch(
+        `http://localhost:5000/api/rooms/${roomId}/messages`,
+        {
+          credentials: "include",
+        }
+      );
+
+      const data = await response.json();
+      if (!response.ok) {
+        return;
+      }
+
+      setChatMessages(Array.isArray(data.messages) ? data.messages : []);
+    } catch {
+      // Ignore chat load failures for now.
+    }
+  }, [roomId]);
+
   useEffect(() => {
     void loadRoomFiles();
-  }, [loadRoomFiles]);
+    void loadRoomMessages();
+  }, [loadRoomFiles, loadRoomMessages]);
 
   useEffect(() => {
     if (!activeFileId) {
@@ -388,6 +428,52 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
     if (providerRef.current) {
       attachMonacoBinding(providerRef.current);
     }
+  };
+
+  useEffect(() => {
+    socket.connect();
+
+    socket.emit("join_room", Number(roomId));
+
+    const handleRoomUsers = (users: RoomUser[]) => {
+      setRoomUsers(users);
+    };
+
+    const handleRoomMessage = (message: ChatMessage) => {
+      setChatMessages((previousMessages) => [...previousMessages, message]);
+    };
+
+    const handleUserLeft = (user: RoomUser) => {
+      setRoomUsers((previousUsers) =>
+        previousUsers.filter((entry) => entry.userId !== user.userId)
+      );
+    };
+
+    socket.on("room_users", handleRoomUsers);
+    socket.on("room_message", handleRoomMessage);
+    socket.on("user_left", handleUserLeft);
+
+    return () => {
+      socket.off("room_users", handleRoomUsers);
+      socket.off("room_message", handleRoomMessage);
+      socket.off("user_left", handleUserLeft);
+      socket.disconnect();
+    };
+  }, [roomId]);
+
+  const handleSendChatMessage = () => {
+    const trimmedMessage = chatInput.trim();
+
+    if (!trimmedMessage) {
+      return;
+    }
+
+    socket.emit("send_room_message", {
+      roomId: Number(roomId),
+      message: trimmedMessage,
+    });
+
+    setChatInput("");
   };
 
   const handleRun = async () => {
@@ -636,6 +722,94 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
                 </button>
               ))
             )}
+          </div>
+
+          <div
+            style={{
+              marginTop: "20px",
+              paddingTop: "12px",
+              borderTop: "1px solid #374151",
+            }}
+          >
+            <strong>Online Users</strong>
+            <div style={{ marginTop: "10px", display: "grid", gap: "6px" }}>
+              {roomUsers.length === 0 ? (
+                <span>Waiting for users...</span>
+              ) : (
+                roomUsers.map((user) => (
+                  <div
+                    key={user.socketId}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "8px",
+                    }}
+                  >
+                    <span
+                      style={{
+                        width: "8px",
+                        height: "8px",
+                        borderRadius: "50%",
+                        background: "#22c55e",
+                        display: "inline-block",
+                      }}
+                    />
+                    <span>{user.username}</span>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
+          <div
+            style={{
+              marginTop: "20px",
+              paddingTop: "12px",
+              borderTop: "1px solid #374151",
+            }}
+          >
+            <strong>Room Chat</strong>
+            <div
+              style={{
+                marginTop: "10px",
+                display: "grid",
+                gap: "8px",
+                maxHeight: "220px",
+                overflowY: "auto",
+              }}
+            >
+              {chatMessages.length === 0 ? (
+                <span>No messages yet.</span>
+              ) : (
+                chatMessages.map((message) => (
+                  <div key={message.id}>
+                    <strong>{message.username}</strong>
+                    <div style={{ color: "#d1d5db" }}>{message.message}</div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div style={{ marginTop: "10px", display: "grid", gap: "8px" }}>
+              <input
+                value={chatInput}
+                onChange={(event) => setChatInput(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    handleSendChatMessage();
+                  }
+                }}
+                placeholder="Type a message..."
+                style={{
+                  padding: "8px",
+                  borderRadius: "6px",
+                  border: "1px solid #374151",
+                  background: "#0f172a",
+                  color: "#f9fafb",
+                }}
+              />
+              <button onClick={handleSendChatMessage}>Send</button>
+            </div>
           </div>
         </aside>
 

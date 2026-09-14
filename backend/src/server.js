@@ -13,6 +13,25 @@ const socketAuth = require("./middleware/socketAuth");
 const app = express();
 const PORT = 5000;
 
+async function ensureChatTable() {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS room_messages (
+        id SERIAL PRIMARY KEY,
+        room_id INTEGER NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        username VARCHAR(255) NOT NULL,
+        message TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+  } catch (error) {
+    console.error("Failed to initialize room_messages table:", error);
+  }
+}
+
+ensureChatTable();
+
 // =========================
 // Middleware
 // =========================
@@ -517,6 +536,101 @@ app.delete(
 );
 
 // =========================
+// ROOM CHAT
+// =========================
+
+app.get(
+  "/api/rooms/:roomId/messages",
+  authenticateToken,
+  async (req, res) => {
+    const { roomId } = req.params;
+
+    try {
+      const result = await pool.query(
+        `SELECT id, room_id, user_id, username, message, created_at
+         FROM room_messages
+         WHERE room_id = $1
+         ORDER BY created_at ASC
+         LIMIT 200`,
+        [roomId]
+      );
+
+      res.json({
+        success: true,
+        messages: result.rows,
+      });
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({
+        success: false,
+        message: "Failed to load room chat",
+      });
+    }
+  }
+);
+
+app.post(
+  "/api/rooms/:roomId/messages",
+  authenticateToken,
+  async (req, res) => {
+    const { roomId } = req.params;
+    const { message } = req.body;
+
+    if (!message || !message.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Message is required",
+      });
+    }
+
+    try {
+      const roomResult = await pool.query(
+        `SELECT id, owner_id
+         FROM rooms
+         WHERE id = $1`,
+        [roomId]
+      );
+
+      if (roomResult.rows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: "Room not found",
+        });
+      }
+
+      const room = roomResult.rows[0];
+      if (String(room.owner_id) !== String(req.user.userId)) {
+        return res.status(403).json({
+          success: false,
+          message: "You are not authorized to chat in this room",
+        });
+      }
+
+      const result = await pool.query(
+        `INSERT INTO room_messages (room_id, user_id, username, message)
+         VALUES ($1, $2, $3, $4)
+         RETURNING id, room_id, user_id, username, message, created_at`,
+        [roomId, req.user.userId, req.user.username, message.trim()]
+      );
+
+      const savedMessage = result.rows[0];
+      io.to(`room_${roomId}`).emit("room_message", savedMessage);
+
+      res.status(201).json({
+        success: true,
+        message: savedMessage,
+      });
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({
+        success: false,
+        message: "Failed to send message",
+      });
+    }
+  }
+);
+
+// =========================
 // CODE EXECUTION
 // =========================
 
@@ -537,6 +651,30 @@ app.post("/api/execute", (req, res) => {
     code,
   });
 });
+
+function getRoomUsers(roomName) {
+  const room = io.sockets.adapter.rooms.get(roomName);
+
+  if (!room) {
+    return [];
+  }
+
+  return Array.from(room).reduce((users, socketId) => {
+    const clientSocket = io.sockets.sockets.get(socketId);
+
+    if (!clientSocket?.user) {
+      return users;
+    }
+
+    users.push({
+      socketId,
+      userId: clientSocket.user.userId,
+      username: clientSocket.user.username,
+    });
+
+    return users;
+  }, []);
+}
 
 // =========================
 // SOCKET.IO
@@ -574,20 +712,27 @@ io.on("connection", (socket) => {
         return;
       }
 
-      socket.join(`room_${roomId}`);
+      const roomName = `room_${roomId}`;
+      socket.data.roomId = roomId;
+      socket.join(roomName);
 
       console.log(
-        `User ${socket.user.userId} joined room_${roomId}`
+        `User ${socket.user.userId} joined ${roomName}`
       );
+
+      const members = getRoomUsers(roomName);
+      io.to(roomName).emit("room_users", members);
 
       socket.emit("room_joined", {
         roomId,
         userId: socket.user.userId,
+        username: socket.user.username,
       });
 
-      socket.to(`room_${roomId}`).emit("user_joined", {
+      socket.to(roomName).emit("user_joined", {
         socketId: socket.id,
         userId: socket.user.userId,
+        username: socket.user.username,
       });
     } catch (error) {
       console.error("Room join error:", error);
@@ -598,9 +743,49 @@ io.on("connection", (socket) => {
     }
   });
 
+  socket.on("send_room_message", async ({ roomId, message }) => {
+    if (!roomId || !message || !message.trim()) {
+      return;
+    }
+
+    const roomName = `room_${roomId}`;
+
+    if (!socket.rooms.has(roomName)) {
+      return;
+    }
+
+    try {
+      const result = await pool.query(
+        `INSERT INTO room_messages (room_id, user_id, username, message)
+         VALUES ($1, $2, $3, $4)
+         RETURNING id, room_id, user_id, username, message, created_at`,
+        [roomId, socket.user.userId, socket.user.username, message.trim()]
+      );
+
+      io.to(roomName).emit("room_message", result.rows[0]);
+    } catch (error) {
+      console.error("Room message error:", error);
+      socket.emit("room_error", {
+        message: "Failed to send message",
+      });
+    }
+  });
+
   socket.on("disconnect", () => {
+    const roomId = socket.data.roomId;
+    if (roomId) {
+      const roomName = `room_${roomId}`;
+      const members = getRoomUsers(roomName);
+      io.to(roomName).emit("room_users", members);
+      io.to(roomName).emit("user_left", {
+        socketId: socket.id,
+        userId: socket.user?.userId,
+        username: socket.user?.username,
+      });
+    }
+
     console.log(
-      `User disconnected: ${socket.id} | User ID: ${socket.user.userId}`
+      `User disconnected: ${socket.id} | User ID: ${socket.user?.userId}`
     );
   });
 });

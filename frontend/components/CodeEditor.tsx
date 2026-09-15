@@ -7,6 +7,7 @@ import type { WebsocketProvider } from "y-websocket";
 import { createYjsDocument } from "@/lib/yjs";
 import { createYjsProvider } from "@/lib/yjsProvider";
 import { socket } from "@/lib/socket";
+import { API_BASE_URL } from "@/lib/config";
 
 interface CodeEditorProps {
   roomId: string;
@@ -182,7 +183,7 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
   const loadRoomFiles = useCallback(async () => {
     try {
       const response = await fetch(
-        `http://localhost:5000/api/files/room/${roomId}`,
+        `${API_BASE_URL}/api/files/room/${roomId}`,
         {
           credentials: "include",
         }
@@ -223,7 +224,7 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
   const createNewFile = useCallback(
     async (filename: string, nextLanguage = "python", content = "") => {
       try {
-        const response = await fetch("http://localhost:5000/api/files", {
+        const response = await fetch(`${API_BASE_URL}/api/files`, {
           method: "POST",
           credentials: "include",
           headers: {
@@ -237,21 +238,33 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
           }),
         });
 
-        const data = await response.json();
+        const data = (await response.json()) as {
+          file?: RoomFile;
+          message?: string;
+        };
 
         if (!response.ok) {
-          setStatus(data.message || "Failed to create file");
+          setStatus(
+            data.message || `File creation failed (${response.status})`
+          );
           return null;
         }
 
-        const createdFile = data.file as RoomFile;
+        const createdFile = data.file;
+        if (!createdFile) {
+          setStatus("The backend returned no file after creation.");
+          return null;
+        }
+
         setFiles((previousFiles) => [...previousFiles, createdFile]);
         setActiveFileId(createdFile.id);
         setLanguage(createdFile.language);
         setStatus(`Created ${createdFile.filename}`);
         return createdFile;
       } catch {
-        setStatus("Could not create the new file.");
+        setStatus(
+          `Backend unavailable at ${API_BASE_URL}. Start the backend and try again.`
+        );
         return null;
       }
     },
@@ -261,7 +274,7 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
   const loadRoomMessages = useCallback(async () => {
     try {
       const response = await fetch(
-        `http://localhost:5000/api/rooms/${roomId}/messages`,
+        `${API_BASE_URL}/api/rooms/${roomId}/messages`,
         {
           credentials: "include",
         }
@@ -298,7 +311,7 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
     nextDocument.text.insert(0, currentFile.content || "");
     setActiveDocument(nextDocument);
     setLanguage(currentFile.language);
-  }, [activeFileId, files]);
+  }, [activeFileId]);
 
   useEffect(() => {
     if (!activeFileId) {
@@ -383,7 +396,7 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
 
     const loadPresence = async () => {
       try {
-        const response = await fetch("http://localhost:5000/api/me", {
+        const response = await fetch(`${API_BASE_URL}/api/me`, {
           credentials: "include",
           signal: abortController.signal,
         });
@@ -494,7 +507,7 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
     setExecutionResult(null);
 
     try {
-      const response = await fetch("http://localhost:5000/api/execute", {
+      const response = await fetch(`${API_BASE_URL}/api/execute`, {
         method: "POST",
         credentials: "include",
         headers: {
@@ -512,7 +525,7 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
       setExecutionResult(data);
 
       if (!response.ok) {
-        setOutput(data.message || "Execution failed");
+        setOutput("");
         return;
       }
 
@@ -542,7 +555,7 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
         return;
       }
 
-      const response = await fetch(`http://localhost:5000/api/files/${activeFileId}`, {
+      const response = await fetch(`${API_BASE_URL}/api/files/${activeFileId}`, {
         method: "PUT",
         credentials: "include",
         headers: {
@@ -594,7 +607,7 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
     const safeName = nextName.trim();
 
     try {
-      const response = await fetch(`http://localhost:5000/api/files/${activeFileId}`, {
+      const response = await fetch(`${API_BASE_URL}/api/files/${activeFileId}`, {
         method: "PUT",
         credentials: "include",
         headers: {
@@ -642,7 +655,7 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
     }
 
     try {
-      const response = await fetch(`http://localhost:5000/api/files/${activeFileId}`, {
+      const response = await fetch(`${API_BASE_URL}/api/files/${activeFileId}`, {
         method: "DELETE",
         credentials: "include",
       });

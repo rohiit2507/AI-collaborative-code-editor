@@ -1,5 +1,7 @@
 const express = require("express");
 const cors = require("cors");
+const helmet = require("helmet");
+const rateLimit = require("express-rate-limit");
 const http = require("http");
 const { Server } = require("socket.io");
 const pool = require("./config/db");
@@ -11,9 +13,11 @@ const authorizeRoomOwner = require("./middleware/roomAuthorization");
 const socketAuth = require("./middleware/socketAuth");
 const ExecutionQueue = require("./executionQueue");
 const { LIMITS, RUNNERS, executeInDocker } = require("./dockerExecutor");
+const logger = require("./logger");
+const { corsOrigins, host, isProduction, jwtSecret, port } = require("./config/env");
 
 const app = express();
-const PORT = 5000;
+const PORT = port;
 const MAX_CODE_BYTES = 100 * 1024;
 const executionQueue = new ExecutionQueue({
   maxPending: 20,
@@ -33,7 +37,7 @@ async function ensureChatTable() {
       )
     `);
   } catch (error) {
-    console.error("Failed to initialize room_messages table:", error);
+    logger.error("Failed to initialize room_messages table", { error: error.message });
   }
 }
 
@@ -45,13 +49,34 @@ ensureChatTable();
 
 app.use(
   cors({
-    origin: "http://localhost:3000",
+    origin: corsOrigins,
     credentials: true,
   })
 );
 
-app.use(express.json());
+app.use(helmet());
+app.use(express.json({ limit: "128kb" }));
 app.use(cookieParser());
+app.use(rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 300,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: "Too many requests. Try again later.",
+  },
+}));
+const authRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 20,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: "Too many authentication attempts. Try again later.",
+  },
+});
 
 // =========================
 // HTTP + Socket.IO Server
@@ -61,7 +86,7 @@ const httpServer = http.createServer(app);
 
 const io = new Server(httpServer, {
   cors: {
-    origin: "http://localhost:3000",
+    origin: corsOrigins,
     credentials: true,
   },
 });
@@ -86,7 +111,7 @@ app.get("/api/health", async (req, res) => {
       databaseTime: result.rows[0].now,
     });
   } catch (error) {
-    console.error(error);
+    logger.error("Health check failed", { error: error.message });
 
     res.status(500).json({
       success: false,
@@ -95,11 +120,21 @@ app.get("/api/health", async (req, res) => {
   }
 });
 
+app.get("/api/readiness", async (req, res) => {
+  try {
+    await pool.query("SELECT 1");
+    res.json({ success: true, status: "ready" });
+  } catch (error) {
+    logger.error("Readiness check failed", { error: error.message });
+    res.status(503).json({ success: false, status: "not_ready" });
+  }
+});
+
 // =========================
 // USERS / REGISTER
 // =========================
 
-app.post("/api/users", async (req, res) => {
+app.post("/api/users", authRateLimit, async (req, res) => {
   const { username, email, password } = req.body;
 
   if (!username || !email || !password) {
@@ -146,7 +181,7 @@ app.post("/api/users", async (req, res) => {
 // LOGIN
 // =========================
 
-app.post("/api/login", async (req, res) => {
+app.post("/api/login", authRateLimit, async (req, res) => {
   const { email, password } = req.body;
 
   if (!email || !password) {
@@ -194,7 +229,7 @@ app.post("/api/login", async (req, res) => {
         username: user.username,
         email: user.email,
       },
-      process.env.JWT_SECRET,
+      jwtSecret,
       {
         expiresIn: "1d",
       }
@@ -203,8 +238,8 @@ app.post("/api/login", async (req, res) => {
     // Store JWT in HTTP-only cookie
     res.cookie("token", token, {
       httpOnly: true,
-      secure: false,
-      sameSite: "lax",
+      secure: isProduction,
+      sameSite: isProduction ? "strict" : "lax",
       maxAge: 24 * 60 * 60 * 1000,
     });
 
@@ -887,10 +922,27 @@ io.on("connection", (socket) => {
   });
 });
 
+app.use((error, req, res, next) => {
+  logger.error("Unhandled request error", {
+    error: error.message,
+    method: req.method,
+    path: req.path,
+  });
+
+  if (res.headersSent) {
+    return next(error);
+  }
+
+  res.status(error.status || 500).json({
+    success: false,
+    message: isProduction ? "Internal server error" : error.message,
+  });
+});
+
 // =========================
 // START SERVER
 // =========================
 
-httpServer.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+httpServer.listen(PORT, host, () => {
+  logger.info("Server started", { host, port: PORT, environment: process.env.NODE_ENV || "development" });
 });

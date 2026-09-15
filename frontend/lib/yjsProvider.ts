@@ -1,5 +1,6 @@
 import { WebsocketProvider } from "y-websocket";
 import * as Y from "yjs";
+import { YJS_URL } from "@/lib/config";
 
 export function createYjsProvider(
   roomId: string,
@@ -12,7 +13,7 @@ export function createYjsProvider(
       : `codecollab-room-${roomId}-file-${fileId}`;
 
   const provider = new WebsocketProvider(
-    "ws://localhost:1234",
+    YJS_URL,
     roomName,
     doc
   );

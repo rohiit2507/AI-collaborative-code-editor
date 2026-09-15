@@ -8,9 +8,9 @@ const encoding = require("lib0/encoding");
 const decoding = require("lib0/decoding");
 const pool = require("./config/db");
 
-const HOST = process.env.YJS_HOST || "localhost";
+const HOST = process.env.YJS_HOST || "0.0.0.0";
 const PORT = Number(process.env.YJS_PORT || 1234);
-const ROOM_NAME_PATTERN = /^codecollab-room-(\d+)$/;
+const ROOM_NAME_PATTERN = /^codecollab-room-(\d+)(?:-file-\d+)?$/;
 const MESSAGE_SYNC = 0;
 const MESSAGE_AWARENESS = 1;
 const PING_INTERVAL_MS = 30_000;

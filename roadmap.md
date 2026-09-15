@@ -37,16 +37,17 @@ Output → Users
 
 📍 Current Implementation Tracker
 
-| Roadmap phase                                   | Current status                                                                                         |
-| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| Phase 1 — Basic Code Editor                     | ✅ Complete                                                                                            |
-| Phase 2 — Backend Architecture                  | ✅ Complete foundation                                                                                 |
-| Phase 3–4 — WebSocket and Collaboration         | ✅ Complete foundation                                                                                 |
-| Phase 5 — CRDT / Conflict Resolution            | ✅ Code implementation complete; authenticated browser acceptance test pending an owner room           |
-| Phase 6 — Live Cursor & Presence                | ✅ Complete                                                                                            |
-| Part 7 — Project & File Management              | ✅ Complete                                                                                            |
-| Part 8 — Advanced Collaboration & Communication | ✅ Foundation complete                                                                                 |
-| Part 9 — Secure Code Execution                  | ✅ API, Docker worker, limits, queue, structured results complete; Docker runtime verification pending |
+| Roadmap phase                                        | Current status                                                                                                   |
+| ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| Phase 1 — Basic Code Editor                          | ✅ Complete                                                                                                      |
+| Phase 2 — Backend Architecture                       | ✅ Complete foundation                                                                                           |
+| Phase 3–4 — WebSocket and Collaboration              | ✅ Complete foundation                                                                                           |
+| Phase 5 — CRDT / Conflict Resolution                 | ✅ Code implementation complete; authenticated browser acceptance test pending an owner room                     |
+| Phase 6 — Live Cursor & Presence                     | ✅ Complete                                                                                                      |
+| Part 7 — Project & File Management                   | ✅ Complete                                                                                                      |
+| Part 8 — Advanced Collaboration & Communication      | ✅ Foundation complete                                                                                           |
+| Part 9 — Secure Code Execution                       | ✅ API, Docker worker, limits, queue, structured results complete; Docker runtime verification pending           |
+| Part 10 — Production Readiness, Testing & Deployment | ✅ Security baseline, tests, containers, CI, migrations, and docs complete; live deployment verification pending |
 
 Authentication and room-owner authorization were implemented early to secure the current collaboration flow. The current Yjs server verifies the JWT HTTP-only cookie and only allows the room owner to connect. Room-member roles will be expanded in the later authentication phase.
 

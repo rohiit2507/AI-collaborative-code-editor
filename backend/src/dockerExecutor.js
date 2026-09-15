@@ -37,6 +37,9 @@ const LIMITS = {
   outputBytes: 64 * 1024,
 };
 
+const executionVolume = process.env.EXECUTION_VOLUME;
+const executionRoot = process.env.EXECUTION_ROOT || os.tmpdir();
+
 function truncateOutput(value, outputBytes) {
   const buffer = Buffer.from(value, "utf8");
   if (buffer.length <= outputBytes) {
@@ -136,6 +139,55 @@ function runDocker(args, input, timeoutMs, outputBytes, containerName) {
   });
 }
 
+function ensureImage(image) {
+  return new Promise((resolve, reject) => {
+    const inspect = spawn("docker", ["image", "inspect", image], {
+      stdio: "ignore",
+      windowsHide: true,
+    });
+
+    inspect.on("error", reject);
+    inspect.on("close", (exitCode) => {
+      if (exitCode === 0) {
+        resolve();
+        return;
+      }
+
+      const pull = spawn("docker", ["pull", image], {
+        stdio: ["ignore", "ignore", "pipe"],
+        windowsHide: true,
+      });
+      let errorOutput = "";
+      pull.stderr.on("data", (chunk) => {
+        errorOutput += chunk.toString("utf8");
+      });
+
+      const timer = setTimeout(() => {
+        pull.kill("SIGKILL");
+        const error = new Error(`Docker image preparation timed out: ${image}`);
+        error.code = "DOCKER_IMAGE_TIMEOUT";
+        reject(error);
+      }, 120_000);
+
+      pull.on("error", (error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
+      pull.on("close", (pullExitCode) => {
+        clearTimeout(timer);
+        if (pullExitCode === 0) {
+          resolve();
+          return;
+        }
+
+        const error = new Error(errorOutput || `Could not pull Docker image: ${image}`);
+        error.code = "DOCKER_IMAGE_PULL_FAILED";
+        reject(error);
+      });
+    });
+  });
+}
+
 async function executeInDocker({ language, code, limits = LIMITS }) {
   const runner = RUNNERS[language];
   if (!runner) {
@@ -144,7 +196,11 @@ async function executeInDocker({ language, code, limits = LIMITS }) {
     throw error;
   }
 
-  const jobDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "codecollab-exec-"));
+  await ensureImage(runner.image);
+
+  await fs.mkdir(executionRoot, { recursive: true });
+  const jobDirectory = await fs.mkdtemp(path.join(executionRoot, "codecollab-exec-"));
+  const jobName = path.basename(jobDirectory);
   const sourcePath = path.join(jobDirectory, runner.sourceName);
   const containerName = `codecollab-${crypto.randomUUID()}`;
 
@@ -152,6 +208,11 @@ async function executeInDocker({ language, code, limits = LIMITS }) {
     await fs.chmod(jobDirectory, 0o755);
     await fs.writeFile(sourcePath, code, { encoding: "utf8", mode: 0o644 });
 
+    const command = runner.command.map((argument) =>
+      executionVolume
+        ? argument.replaceAll("/workspace", `/workspace/${jobName}`)
+        : argument
+    );
     const dockerArgs = [
       "run",
       "--name", containerName,
@@ -165,9 +226,12 @@ async function executeInDocker({ language, code, limits = LIMITS }) {
       "--cap-drop", "ALL",
       "--security-opt", "no-new-privileges:true",
       "--tmpfs", "/tmp:rw,nosuid,nodev,size=64m",
-      "--mount", `type=bind,src=${jobDirectory},dst=/workspace,readonly`,
+      "--mount",
+      executionVolume
+        ? `type=volume,src=${executionVolume},dst=/workspace,readonly`
+        : `type=bind,src=${jobDirectory},dst=/workspace,readonly`,
       runner.image,
-      ...runner.command,
+      ...command,
     ];
 
     const result = await runDocker(

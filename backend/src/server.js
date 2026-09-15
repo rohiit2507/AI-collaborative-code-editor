@@ -13,6 +13,7 @@ const authorizeRoomOwner = require("./middleware/roomAuthorization");
 const socketAuth = require("./middleware/socketAuth");
 const ExecutionQueue = require("./executionQueue");
 const { LIMITS, RUNNERS, executeInDocker } = require("./dockerExecutor");
+const { createVersionSnapshot, buildVersionLabel } = require("./versionHistory");
 const logger = require("./logger");
 const { corsOrigins, host, isProduction, jwtSecret, port } = require("./config/env");
 
@@ -41,7 +42,34 @@ async function ensureChatTable() {
   }
 }
 
+async function ensureVersionHistoryTable() {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS file_versions (
+        id SERIAL PRIMARY KEY,
+        file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+        room_id INTEGER NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+        version_number INTEGER NOT NULL,
+        filename VARCHAR(255) NOT NULL,
+        language VARCHAR(64) NOT NULL,
+        content TEXT NOT NULL DEFAULT '',
+        summary TEXT NOT NULL DEFAULT '',
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(file_id, version_number)
+      )
+    `);
+
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS file_versions_file_created_idx
+      ON file_versions (file_id, created_at DESC)
+    `);
+  } catch (error) {
+    logger.error("Failed to initialize file_versions table", { error: error.message });
+  }
+}
+
 ensureChatTable();
+ensureVersionHistoryTable();
 
 // =========================
 // Middleware
@@ -389,9 +417,25 @@ app.post(
         [roomId, filename, language, content || ""]
       );
 
+      const createdFile = result.rows[0];
+      const versionResult = await pool.query(
+        `INSERT INTO file_versions (file_id, room_id, version_number, filename, language, content, summary)
+         VALUES ($1, $2, 1, $3, $4, $5, $6)
+         RETURNING *`,
+        [createdFile.id, createdFile.room_id, createdFile.filename, createdFile.language, createdFile.content, `Created ${createdFile.filename}`]
+      );
+
       res.status(201).json({
         success: true,
-        file: result.rows[0],
+        file: createdFile,
+        version: createVersionSnapshot({
+          id: versionResult.rows[0].id,
+          filename: versionResult.rows[0].filename,
+          language: versionResult.rows[0].language,
+          content: versionResult.rows[0].content,
+          versionNumber: versionResult.rows[0].version_number,
+          summary: versionResult.rows[0].summary,
+        }),
       });
     } catch (error) {
       console.error(error);
@@ -481,9 +525,33 @@ app.put(
         });
       }
 
+      const updatedFile = result.rows[0];
+      const versionResult = await pool.query(
+        `SELECT COALESCE(MAX(version_number), 0) + 1 AS next_version
+         FROM file_versions
+         WHERE file_id = $1`,
+        [updatedFile.id]
+      );
+
+      const nextVersionNumber = Number(versionResult.rows[0].next_version || 1);
+      const savedVersion = await pool.query(
+        `INSERT INTO file_versions (file_id, room_id, version_number, filename, language, content, summary)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING *`,
+        [updatedFile.id, updatedFile.room_id, nextVersionNumber, updatedFile.filename, updatedFile.language, updatedFile.content, `Saved ${updatedFile.filename}`]
+      );
+
       res.json({
         success: true,
-        file: result.rows[0],
+        file: updatedFile,
+        version: createVersionSnapshot({
+          id: savedVersion.rows[0].id,
+          filename: savedVersion.rows[0].filename,
+          language: savedVersion.rows[0].language,
+          content: savedVersion.rows[0].content,
+          versionNumber: savedVersion.rows[0].version_number,
+          summary: savedVersion.rows[0].summary,
+        }),
       });
     } catch (error) {
       console.error(error);
@@ -491,6 +559,124 @@ app.put(
       res.status(500).json({
         success: false,
         message: "Failed to update file",
+      });
+    }
+  }
+);
+
+app.get(
+  "/api/files/:id/versions",
+  authenticateToken,
+  async (req, res) => {
+    const { id } = req.params;
+
+    try {
+      const result = await pool.query(
+        `SELECT fv.*
+         FROM file_versions fv
+         JOIN files f ON f.id = fv.file_id
+         JOIN rooms r ON r.id = f.room_id
+         WHERE fv.file_id = $1 AND r.owner_id = $2
+         ORDER BY fv.version_number DESC`,
+        [id, req.user.userId]
+      );
+
+      res.json({
+        success: true,
+        versions: result.rows.map((row) => createVersionSnapshot({
+          id: row.id,
+          filename: row.filename,
+          language: row.language,
+          content: row.content,
+          versionNumber: row.version_number,
+          summary: row.summary,
+        })),
+      });
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({
+        success: false,
+        message: "Failed to load file versions",
+      });
+    }
+  }
+);
+
+app.post(
+  "/api/files/:id/restore",
+  authenticateToken,
+  async (req, res) => {
+    const { id } = req.params;
+    const { versionNumber } = req.body;
+
+    if (!versionNumber) {
+      return res.status(400).json({
+        success: false,
+        message: "Version number is required",
+      });
+    }
+
+    try {
+      const versionResult = await pool.query(
+        `SELECT fv.*
+         FROM file_versions fv
+         JOIN files f ON f.id = fv.file_id
+         JOIN rooms r ON r.id = f.room_id
+         WHERE fv.file_id = $1 AND fv.version_number = $2 AND r.owner_id = $3`,
+        [id, versionNumber, req.user.userId]
+      );
+
+      if (versionResult.rows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: "Version not found or unauthorized",
+        });
+      }
+
+      const version = versionResult.rows[0];
+      const restoreResult = await pool.query(
+        `UPDATE files
+         SET filename = $1,
+             language = $2,
+             content = $3,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = $4
+         RETURNING *`,
+        [version.filename, version.language, version.content, id]
+      );
+
+      const currentFile = restoreResult.rows[0];
+      const nextVersionNumber = await pool.query(
+        `SELECT COALESCE(MAX(version_number), 0) + 1 AS next_version
+         FROM file_versions
+         WHERE file_id = $1`,
+        [currentFile.id]
+      );
+
+      const savedVersion = await pool.query(
+        `INSERT INTO file_versions (file_id, room_id, version_number, filename, language, content, summary)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING *`,
+        [currentFile.id, currentFile.room_id, Number(nextVersionNumber.rows[0].next_version), currentFile.filename, currentFile.language, currentFile.content, `Restored ${buildVersionLabel({ versionNumber })}`]
+      );
+
+      res.json({
+        success: true,
+        file: currentFile,
+        restoredVersion: createVersionSnapshot({
+          id: savedVersion.rows[0].id,
+          filename: savedVersion.rows[0].filename,
+          language: savedVersion.rows[0].language,
+          content: savedVersion.rows[0].content,
+          versionNumber: savedVersion.rows[0].version_number,
+          summary: savedVersion.rows[0].summary,
+        }),
+      });
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({
+        success: false,
+        message: "Failed to restore version",
       });
     }
   }
@@ -901,6 +1087,24 @@ io.on("connection", (socket) => {
         message: "Failed to send message",
       });
     }
+  });
+
+  socket.on("typing_status", ({ roomId, isTyping }) => {
+    if (!roomId || typeof isTyping !== "boolean") {
+      return;
+    }
+
+    const roomName = `room_${roomId}`;
+    if (!socket.rooms.has(roomName)) {
+      return;
+    }
+
+    socket.to(roomName).emit("user_typing", {
+      roomId,
+      userId: socket.user.userId,
+      username: socket.user.username,
+      isTyping,
+    });
   });
 
   socket.on("disconnect", () => {

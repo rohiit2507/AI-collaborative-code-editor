@@ -51,6 +51,7 @@ interface Participant extends PresenceUser {
   isCurrentUser: boolean;
   cursor: CursorPosition | null;
   selection: SelectionRange | null;
+  activeFileName: string;
 }
 
 interface ChatMessage {
@@ -60,6 +61,15 @@ interface ChatMessage {
   username: string;
   message: string;
   created_at: string;
+}
+
+interface FileVersion {
+  id: number;
+  versionNumber: number;
+  filename: string;
+  language: string;
+  content: string;
+  summary: string;
 }
 
 interface ExecutionResult {
@@ -102,15 +112,20 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
   const [status, setStatus] = useState("Loading files...");
   const [files, setFiles] = useState<RoomFile[]>([]);
   const [activeFileId, setActiveFileId] = useState<number | null>(null);
+  const [openFileIds, setOpenFileIds] = useState<number[]>([]);
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [roomUsers, setRoomUsers] = useState<RoomUser[]>([]);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
+  const [typingUsers, setTypingUsers] = useState<string[]>([]);
+  const [versionHistory, setVersionHistory] = useState<FileVersion[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
   const [activeDocument, setActiveDocument] = useState(() => createYjsDocument());
   const providerRef = useRef<WebsocketProvider | null>(null);
   const editorRef = useRef<MonacoEditor.IStandaloneCodeEditor | null>(null);
   const bindingRef = useRef<{ destroy: () => void } | null>(null);
   const bindingRequestRef = useRef(0);
+  const documentsRef = useRef<Record<number, ReturnType<typeof createYjsDocument>>>({});
 
   const { doc, text } = activeDocument;
 
@@ -291,10 +306,51 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
     }
   }, [roomId]);
 
+  const loadVersionHistory = useCallback(async (fileId: number | null) => {
+    if (!fileId) {
+      setVersionHistory([]);
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/files/${fileId}/versions`, {
+        credentials: "include",
+      });
+      const data = await response.json();
+
+      if (!response.ok) {
+        setVersionHistory([]);
+        return;
+      }
+
+      setVersionHistory(Array.isArray(data.versions) ? data.versions : []);
+    } catch {
+      setVersionHistory([]);
+    }
+  }, []);
+
+  const openFile = useCallback((fileId: number, fileContent = "") => {
+    if (!documentsRef.current[fileId]) {
+      const nextDocument = createYjsDocument();
+      nextDocument.text.insert(0, fileContent || "");
+      documentsRef.current[fileId] = nextDocument;
+    }
+
+    setOpenFileIds((previousFiles) =>
+      previousFiles.includes(fileId) ? previousFiles : [...previousFiles, fileId]
+    );
+    setActiveFileId(fileId);
+    setActiveDocument(documentsRef.current[fileId]);
+  }, []);
+
   useEffect(() => {
     void loadRoomFiles();
     void loadRoomMessages();
   }, [loadRoomFiles, loadRoomMessages]);
+
+  useEffect(() => {
+    void loadVersionHistory(activeFileId);
+  }, [activeFileId, loadVersionHistory]);
 
   useEffect(() => {
     if (!activeFileId) {
@@ -307,11 +363,15 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
       return;
     }
 
-    const nextDocument = createYjsDocument();
-    nextDocument.text.insert(0, currentFile.content || "");
+    const nextDocument = documentsRef.current[activeFileId] ?? createYjsDocument();
+    if (!documentsRef.current[activeFileId]) {
+      nextDocument.text.insert(0, currentFile.content || "");
+      documentsRef.current[activeFileId] = nextDocument;
+    }
+
     setActiveDocument(nextDocument);
     setLanguage(currentFile.language);
-  }, [activeFileId]);
+  }, [activeFileId, files]);
 
   useEffect(() => {
     if (!activeFileId) {
@@ -332,6 +392,7 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
           const user = state.user as Partial<PresenceUser> | undefined;
           const cursor = state.cursor as Partial<CursorPosition> | undefined;
           const selection = state.selection as Partial<SelectionRange> | undefined;
+          const activeFileIdInAwareness = state.activeFileId as number | undefined;
 
           if (
             !user ||
@@ -340,6 +401,8 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
           ) {
             return null;
           }
+
+          const activeFile = files.find((file) => file.id === activeFileIdInAwareness);
 
           return {
             clientId,
@@ -366,14 +429,20 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
                     endColumn: selection.endColumn,
                   }
                 : null,
+            activeFileName: activeFile?.filename ?? "idle",
           };
         })
         .filter((participant): participant is Participant => participant !== null)
-        .sort(
-          (first, second) =>
+        .sort((first, second) => {
+          if (!first || !second) {
+            return 0;
+          }
+
+          return (
             Number(second.isCurrentUser) - Number(first.isCurrentUser) ||
             first.name.localeCompare(second.name)
-        );
+          );
+        });
 
       setParticipants(nextParticipants);
     };
@@ -413,6 +482,7 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
           id: user.id,
           name: user.username,
         });
+        nextProvider.awareness.setLocalStateField("activeFileId", activeFileId);
         syncLocalCursorState();
         updateParticipants();
       } catch (error) {
@@ -442,6 +512,25 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
     };
   }, [activeFileId, attachMonacoBinding, doc, files, roomId, syncLocalCursorState]);
 
+  useEffect(() => {
+    if (!activeFileId || !activeDocument) {
+      return;
+    }
+
+    const currentFile = files.find((file) => file.id === activeFileId);
+    const content = activeDocument.text.toString();
+
+    if (!currentFile || content === currentFile.content) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      void handleSave({ silent: true, contentOverride: content, languageOverride: language });
+    }, 900);
+
+    return () => clearTimeout(timer);
+  }, [activeDocument, activeFileId, files, language]);
+
   const handleEditorMount: OnMount = (editor) => {
     editorRef.current = editor;
 
@@ -469,6 +558,13 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
       setChatMessages((previousMessages) => [...previousMessages, message]);
     };
 
+    const handleUserTyping = ({ username, isTyping }: { username: string; isTyping: boolean }) => {
+      setTypingUsers((previousUsers) => {
+        const nextUsers = previousUsers.filter((user) => user !== username);
+        return isTyping ? [...nextUsers, username] : nextUsers;
+      });
+    };
+
     const handleUserLeft = (user: RoomUser) => {
       setRoomUsers((previousUsers) =>
         previousUsers.filter((entry) => entry.userId !== user.userId)
@@ -477,11 +573,13 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
 
     socket.on("room_users", handleRoomUsers);
     socket.on("room_message", handleRoomMessage);
+    socket.on("user_typing", handleUserTyping);
     socket.on("user_left", handleUserLeft);
 
     return () => {
       socket.off("room_users", handleRoomUsers);
       socket.off("room_message", handleRoomMessage);
+      socket.off("user_typing", handleUserTyping);
       socket.off("user_left", handleUserLeft);
       socket.disconnect();
     };
@@ -499,7 +597,22 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
       message: trimmedMessage,
     });
 
+    socket.emit("typing_status", {
+      roomId: Number(roomId),
+      isTyping: false,
+    });
+
     setChatInput("");
+    setTypingUsers([]);
+  };
+
+  const handleCopyShareLink = async () => {
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+      setStatus("Room link copied to clipboard.");
+    } catch {
+      setStatus("Could not copy the room link automatically.");
+    }
   };
 
   const handleRun = async () => {
@@ -540,21 +653,30 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
     }
   };
 
-  const handleSave = async () => {
+  const handleSave = async (options?: {
+    silent?: boolean;
+    contentOverride?: string;
+    languageOverride?: string;
+  }) => {
     if (!activeFileId) {
       setStatus("Select a file to save.");
       return;
     }
 
-    setStatus("Saving...");
+    const currentFile = files.find((file) => file.id === activeFileId);
+    if (!currentFile) {
+      setStatus("File not found.");
+      return;
+    }
+
+    const contentToSave = options?.contentOverride ?? text.toString();
+    const languageToSave = options?.languageOverride ?? language;
+
+    if (!options?.silent) {
+      setStatus("Saving...");
+    }
 
     try {
-      const currentFile = files.find((file) => file.id === activeFileId);
-      if (!currentFile) {
-        setStatus("File not found.");
-        return;
-      }
-
       const response = await fetch(`${API_BASE_URL}/api/files/${activeFileId}`, {
         method: "PUT",
         credentials: "include",
@@ -563,8 +685,8 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
         },
         body: JSON.stringify({
           filename: currentFile.filename,
-          language,
-          content: text.toString(),
+          language: languageToSave,
+          content: contentToSave,
         }),
       });
 
@@ -578,12 +700,14 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
       setFiles((previousFiles) =>
         previousFiles.map((file) =>
           file.id === activeFileId
-            ? { ...file, content: text.toString(), language }
+            ? { ...file, content: contentToSave, language: languageToSave }
             : file
         )
       );
 
-      setStatus(`Saved ${currentFile.filename}`);
+      if (!options?.silent) {
+        setStatus(`Saved ${currentFile.filename}`);
+      }
     } catch {
       setStatus("Could not connect to backend.");
     }
@@ -688,6 +812,58 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
     await loadRoomFiles();
   };
 
+  const handleRestoreVersion = async (version: FileVersion) => {
+    if (!activeFileId) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/files/${activeFileId}/restore`, {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ versionNumber: version.versionNumber }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        setStatus(data.message || "Failed to restore version");
+        return;
+      }
+
+      const restoredContent = data.file?.content ?? version.content;
+      const restoredLanguage = data.file?.language ?? version.language;
+      const restoredFilename = data.file?.filename ?? version.filename;
+
+      setFiles((previousFiles) =>
+        previousFiles.map((file) =>
+          file.id === activeFileId
+            ? {
+                ...file,
+                content: restoredContent,
+                language: restoredLanguage,
+                filename: restoredFilename,
+              }
+            : file
+        )
+      );
+
+      const nextDocument = documentsRef.current[activeFileId] ?? createYjsDocument();
+      nextDocument.text.delete(0, nextDocument.text.length);
+      nextDocument.text.insert(0, restoredContent);
+      documentsRef.current[activeFileId] = nextDocument;
+      setActiveDocument(nextDocument);
+      setLanguage(restoredLanguage);
+      setStatus(`Restored ${restoredFilename} to Version ${version.versionNumber}`);
+      void loadVersionHistory(activeFileId);
+    } catch {
+      setStatus("Could not restore this version.");
+    }
+  };
+
   return (
     <div style={{ padding: "20px" }}>
       <div
@@ -711,6 +887,10 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
         <button onClick={handleRename}>Rename</button>
         <button onClick={handleDelete}>Delete</button>
         <button onClick={handleLoad}>Refresh Files</button>
+        <button onClick={() => setShowHistory((previous) => !previous)}>
+          {showHistory ? "Hide History" : "Version History"}
+        </button>
+        <button onClick={handleCopyShareLink}>Share Room</button>
       </div>
 
       <div
@@ -739,7 +919,10 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
               files.map((file) => (
                 <button
                   key={file.id}
-                  onClick={() => setActiveFileId(file.id)}
+                  onClick={() => {
+                    const content = documentsRef.current[file.id]?.text.toString() ?? file.content ?? "";
+                    openFile(file.id, content);
+                  }}
                   style={{
                     width: "100%",
                     textAlign: "left",
@@ -823,10 +1006,29 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
               )}
             </div>
 
+            {typingUsers.length > 0 ? (
+              <div style={{ marginTop: "8px", color: "#93c5fd" }}>
+                {typingUsers.join(", ")} {typingUsers.length === 1 ? "is" : "are"} typing...
+              </div>
+            ) : null}
+
             <div style={{ marginTop: "10px", display: "grid", gap: "8px" }}>
               <input
                 value={chatInput}
-                onChange={(event) => setChatInput(event.target.value)}
+                onChange={(event) => {
+                  const nextValue = event.target.value;
+                  setChatInput(nextValue);
+                  socket.emit("typing_status", {
+                    roomId: Number(roomId),
+                    isTyping: nextValue.trim().length > 0,
+                  });
+                }}
+                onBlur={() => {
+                  socket.emit("typing_status", {
+                    roomId: Number(roomId),
+                    isTyping: false,
+                  });
+                }}
                 onKeyDown={(event) => {
                   if (event.key === "Enter") {
                     handleSendChatMessage();
@@ -863,7 +1065,106 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
             </select>
 
             <button onClick={handleRun}>Run</button>
-            <button onClick={handleSave}>Save</button>
+            <button onClick={() => void handleSave()}>Save</button>
+          </div>
+
+          {showHistory && activeFileId ? (
+            <div
+              style={{
+                marginBottom: "12px",
+                padding: "12px",
+                border: "1px solid #374151",
+                borderRadius: "10px",
+                background: "#111827",
+                color: "#f9fafb",
+              }}
+            >
+              <strong>Version History</strong>
+              {versionHistory.length === 0 ? (
+                <div style={{ marginTop: "8px", color: "#9ca3af" }}>No saved versions for this file yet.</div>
+              ) : (
+                <div style={{ marginTop: "10px", display: "grid", gap: "8px" }}>
+                  {versionHistory.map((version) => (
+                    <div
+                      key={version.id}
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        gap: "10px",
+                        alignItems: "center",
+                        padding: "8px 10px",
+                        borderRadius: "8px",
+                        background: "#1f2937",
+                      }}
+                    >
+                      <div>
+                        <strong>Version {version.versionNumber}</strong>
+                        <div style={{ color: "#cbd5e1", fontSize: "12px" }}>{version.summary}</div>
+                      </div>
+                      <button onClick={() => void handleRestoreVersion(version)}>Restore</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : null}
+
+          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "10px" }}>
+            {openFileIds.length === 0 ? (
+              <span>No open tabs</span>
+            ) : (
+              openFileIds.map((fileId) => {
+                const file = files.find((entry) => entry.id === fileId);
+                if (!file) {
+                  return null;
+                }
+
+                const isActive = fileId === activeFileId;
+
+                return (
+                  <button
+                    key={file.id}
+                    onClick={() => {
+                      const content = documentsRef.current[file.id]?.text.toString() ?? file.content ?? "";
+                      openFile(file.id, content);
+                    }}
+                    style={{
+                      padding: "6px 10px",
+                      borderRadius: "8px",
+                      border: isActive ? "1px solid #60a5fa" : "1px solid #374151",
+                      background: isActive ? "#1d4ed8" : "#1f2937",
+                      color: "#f9fafb",
+                      cursor: "pointer",
+                    }}
+                  >
+                    {file.filename}
+                    <span
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setOpenFileIds((previousFiles) => {
+                          const nextFiles = previousFiles.filter((id) => id !== file.id);
+                          if (activeFileId === file.id && nextFiles.length > 0) {
+                            setActiveFileId(nextFiles[0]);
+                            const nextDocument = documentsRef.current[nextFiles[0]] ?? createYjsDocument();
+                            if (!documentsRef.current[nextFiles[0]]) {
+                              nextDocument.text.insert(0, files.find((entry) => entry.id === nextFiles[0])?.content ?? "");
+                              documentsRef.current[nextFiles[0]] = nextDocument;
+                            }
+                            setActiveDocument(nextDocument);
+                          } else if (activeFileId === file.id) {
+                            setActiveFileId(null);
+                          }
+                          return nextFiles;
+                        });
+                      }}
+                      style={{ marginLeft: "8px", opacity: 0.8 }}
+                    >
+                      ×
+                    </span>
+                  </button>
+                );
+              })
+            )}
           </div>
 
           <p>
@@ -924,6 +1225,9 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
                     ) : (
                       <span style={{ fontSize: "11px", opacity: 0.7 }}>idle</span>
                     )}
+                    {participant.activeFileName ? (
+                      <span style={{ fontSize: "11px", opacity: 0.8 }}>• {participant.activeFileName}</span>
+                    ) : null}
                   </span>
                 ))
               )}

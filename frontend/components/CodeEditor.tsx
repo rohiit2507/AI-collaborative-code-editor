@@ -61,6 +61,18 @@ interface ChatMessage {
   created_at: string;
 }
 
+interface ExecutionResult {
+  success: boolean;
+  jobId?: string;
+  language?: string;
+  status: string;
+  stdout?: string;
+  stderr?: string;
+  exitCode?: number;
+  durationMs?: number;
+  message?: string;
+}
+
 interface RoomUser {
   socketId: string;
   userId: number;
@@ -85,6 +97,7 @@ function getPresenceColor(userId: number) {
 export default function CodeEditor({ roomId }: CodeEditorProps) {
   const [language, setLanguage] = useState("python");
   const [output, setOutput] = useState("");
+  const [executionResult, setExecutionResult] = useState<ExecutionResult | null>(null);
   const [status, setStatus] = useState("Loading files...");
   const [files, setFiles] = useState<RoomFile[]>([]);
   const [activeFileId, setActiveFileId] = useState<number | null>(null);
@@ -477,7 +490,8 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
   };
 
   const handleRun = async () => {
-    setOutput("Sending code to backend...");
+    setOutput("Queueing execution...");
+    setExecutionResult(null);
 
     try {
       const response = await fetch("http://localhost:5000/api/execute", {
@@ -487,23 +501,29 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
+          roomId: Number(roomId),
+          fileId: activeFileId,
           code: text.toString(),
           language,
         }),
       });
 
-      const data = await response.json();
+      const data = (await response.json()) as ExecutionResult;
+      setExecutionResult(data);
 
       if (!response.ok) {
-        setOutput(data.message || "Something went wrong");
+        setOutput(data.message || "Execution failed");
         return;
       }
 
-      setOutput(
-        `Backend received:\n\nLanguage: ${data.language}\nCode:\n${data.code}`
-      );
+      setOutput(data.stdout || "");
     } catch {
       setOutput("Could not connect to backend.");
+      setExecutionResult({
+        success: false,
+        status: "system_error",
+        message: "Could not connect to the execution service.",
+      });
     }
   };
 
@@ -947,7 +967,28 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
             }}
           >
             <strong>OUTPUT</strong>
-            <pre>{output || "Output will appear here..."}</pre>
+            {executionResult ? (
+              <div style={{ marginTop: "10px" }}>
+                <div>
+                  Status: <strong>{executionResult.status}</strong>
+                  {executionResult.durationMs !== undefined
+                    ? ` (${executionResult.durationMs} ms)`
+                    : ""}
+                </div>
+                <pre>{executionResult.stdout || output || "No output"}</pre>
+                {executionResult.stderr ? (
+                  <>
+                    <strong>ERROR</strong>
+                    <pre style={{ color: "#fca5a5" }}>{executionResult.stderr}</pre>
+                  </>
+                ) : null}
+                {executionResult.message && !executionResult.stderr ? (
+                  <pre style={{ color: "#fca5a5" }}>{executionResult.message}</pre>
+                ) : null}
+              </div>
+            ) : (
+              <pre>{output || "Output will appear here..."}</pre>
+            )}
           </div>
         </div>
       </div>

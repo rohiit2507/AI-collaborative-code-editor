@@ -9,9 +9,16 @@ const cookieParser = require("cookie-parser");
 const authenticateToken = require("./middleware/authMiddleware");
 const authorizeRoomOwner = require("./middleware/roomAuthorization");
 const socketAuth = require("./middleware/socketAuth");
+const ExecutionQueue = require("./executionQueue");
+const { LIMITS, RUNNERS, executeInDocker } = require("./dockerExecutor");
 
 const app = express();
 const PORT = 5000;
+const MAX_CODE_BYTES = 100 * 1024;
+const executionQueue = new ExecutionQueue({
+  maxPending: 20,
+  worker: executeInDocker,
+});
 
 async function ensureChatTable() {
   try {
@@ -634,22 +641,112 @@ app.post(
 // CODE EXECUTION
 // =========================
 
-app.post("/api/execute", (req, res) => {
-  const { code, language } = req.body;
+app.post("/api/execute", authenticateToken, async (req, res) => {
+  const { roomId, fileId, code, language } = req.body;
 
-  if (!code || !language) {
+  if (!roomId || typeof code !== "string" || !code.trim() || !language) {
     return res.status(400).json({
       success: false,
-      message: "Code and language are required",
+      status: "system_error",
+      message: "roomId, code and language are required",
     });
   }
 
-  res.json({
-    success: true,
-    message: "Execution service will be connected later",
-    language,
-    code,
-  });
+  if (!RUNNERS[language]) {
+    return res.status(400).json({
+      success: false,
+      status: "system_error",
+      message: `Unsupported language: ${language}`,
+    });
+  }
+
+  if (Buffer.byteLength(code, "utf8") > MAX_CODE_BYTES) {
+    return res.status(413).json({
+      success: false,
+      status: "resource_limit",
+      message: `Code must be smaller than ${MAX_CODE_BYTES} bytes`,
+    });
+  }
+
+  try {
+    const roomResult = await pool.query(
+      `SELECT id, owner_id
+       FROM rooms
+       WHERE id = $1`,
+      [roomId]
+    );
+
+    if (roomResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        status: "system_error",
+        message: "Room not found",
+      });
+    }
+
+    if (String(roomResult.rows[0].owner_id) !== String(req.user.userId)) {
+      return res.status(403).json({
+        success: false,
+        status: "system_error",
+        message: "You are not authorized to execute code in this room",
+      });
+    }
+
+    if (fileId) {
+      const fileResult = await pool.query(
+        `SELECT id
+         FROM files
+         WHERE id = $1 AND room_id = $2`,
+        [fileId, roomId]
+      );
+
+      if (fileResult.rows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          status: "system_error",
+          message: "File not found in this room",
+        });
+      }
+    }
+
+    const jobId = require("node:crypto").randomUUID();
+    const result = await executionQueue.enqueue({
+      jobId,
+      language,
+      code,
+      limits: LIMITS,
+    });
+
+    return res.json({
+      success: result.status === "success",
+      jobId,
+      language,
+      ...result,
+    });
+  } catch (error) {
+    if (error.code === "QUEUE_FULL") {
+      return res.status(429).json({
+        success: false,
+        status: "resource_limit",
+        message: "Execution queue is full. Try again shortly.",
+      });
+    }
+
+    if (error.code === "ENOENT") {
+      return res.status(503).json({
+        success: false,
+        status: "system_error",
+        message: "Docker is unavailable. Start Docker Desktop to run code.",
+      });
+    }
+
+    console.error("Execution error:", error);
+    return res.status(500).json({
+      success: false,
+      status: "system_error",
+      message: "Execution service failed",
+    });
+  }
 });
 
 function getRoomUsers(roomName) {

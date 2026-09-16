@@ -2,6 +2,50 @@ Haan. Agar tum Project #1 — Real-Time Collaborative Code Editor choose kar rah
 
 Video ke according iska core idea hai: 2+ users same code file ko real time mein edit kar sakein, live cursors dikhein, code execute ho, aur execution isolated/safe ho. Main engineering challenges hain concurrent editing + secure code execution + scalable WebSocket connections.
 
+## Part 14 - Production Deployment, Scalability & Final Product Polish
+
+Status: In progress locally. The production foundation is implemented; public hosting, domain, HTTPS, and live multi-user load testing remain deployment-provider work.
+
+Completed in this phase:
+
+- Added a transactional migration runner with recorded migration state.
+- Wired Compose so migrations complete before backend and Yjs start.
+- Added production proxy awareness and insecure HTTP-origin warnings.
+- Added dedicated AI and code-execution rate limits.
+- Documented server-only AI secrets and public browser configuration.
+- Added deployment, security, scalability, demo, and placement guidance in `notes14.md`.
+
+Remaining before public launch:
+
+- Deploy containers behind a reverse proxy with TLS and `wss://`.
+- Configure managed PostgreSQL backups, secret storage, and log/alert shipping.
+- Add authenticated browser acceptance tests and Docker-enabled security tests.
+- Replace owner-only collaboration with explicit room membership before inviting non-owners.
+
+## Part 15 - Advanced AI + Intelligent Development Platform
+
+Status: Foundation implemented.
+
+- Project analyzer with language detection, metadata, symbols, imports, and relevant-file search.
+- Protected project-aware Q&A endpoint and frontend `Ask project` action.
+- Approval-gated structured AI proposal endpoint; no silent file mutation.
+- AI usage telemetry migration for feature, model, size, latency, success, user, and room.
+- Focused analyzer tests and full backend/frontend validation pass.
+
+Remaining Part 15 work is the diff approval UI, multi-file atomic changes, bounded test-run-fix workflows, Git/documentation assistants, security/performance findings, dashboard analytics, and authenticated end-to-end testing. See `notes15.md`.
+
+## Part 16 - Final Release, Portfolio & Placement Readiness
+
+Status: Release preparation complete locally.
+
+- Added [architecture.md](architecture.md) with system boundaries, data flow, trust model, and scaling direction.
+- Added [notes16.md](notes16.md) with the release gate, audit matrix, security position, resume entry, and interview explanation.
+- Added CodeCollab favicon and final metadata.
+- Updated the README for the final AI/project-understanding feature set.
+- Verified tests, production build, diagnostics, Compose configuration, and repository hygiene.
+
+External launch tasks remain provider-dependent: public HTTPS deployment, managed backups/monitoring, live two-user acceptance testing, screenshots, demo recording, and the final `v1.0.0` tag.
+
 🎯 Final Goal
 
 End mein tumhara system roughly aisa work karega:
@@ -437,7 +481,31 @@ This turns the collaborative editor from a sync tool into a real AI-enabled IDE.
 
 Status: ✅ Backend AI service, project-aware context, and editor assistant panel implemented.
 
-Phase 13 — Scaling Architecture
+Phase 13 — AI-Powered Developer Experience
+
+Time: 3–6 days
+
+Ab project ko AI-enabled developer workflow mein convert karo.
+
+Core areas:
+
+- AI code generation from natural language
+- AI debugging using Docker execution output
+- Generate tests for code
+- Review code and highlight possible issues
+- Refactor, optimize, explain, and document code
+- Better project context selection
+- Conversation memory in PostgreSQL
+- Streaming AI responses
+- Provider abstraction for model flexibility
+- Usage and cost controls
+- Polished AI UX
+
+This is where the product starts feeling like a real coding assistant instead of just a chat panel.
+
+Status: ✅ AI backend foundation and editor assistant panel are in place; the next improvement is deeper code-generation and debugging integrations.
+
+Phase 14 — Scaling Architecture
 
 Time: 4–7 days
 
@@ -480,7 +548,7 @@ Connection management
 
 Is stage par tumhara project normal college project se kaafi upar chala jayega.
 
-Phase 13 — Testing
+Phase 15 — Testing
 
 Time: 4–6 days
 
@@ -512,7 +580,7 @@ Security
 Malicious input
 Unauthorized room access
 Container escape attempts
-Phase 14 — Deployment
+Phase 16 — Deployment
 
 Time: 3–5 days
 

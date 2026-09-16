@@ -228,7 +228,7 @@ webSocketServer.on("connection", setupWSConnection);
 
 const server = http.createServer((_request, response) => {
   response.writeHead(200, { "Content-Type": "application/json" });
-  response.end(JSON.stringify({ success: true, service: "Yjs WebSocket" }));
+  response.end(JSON.stringify({ success: true, service: "Yjs WebSocket", rooms: documents.size }));
 });
 
 server.on("upgrade", async (request, socket, head) => {

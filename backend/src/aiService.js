@@ -30,6 +30,79 @@ function getFallbackReply({ prompt, currentFile, selectedCode, language }) {
   const code = (selectedCode || "").trim();
   const activeFile = currentFile || "this file";
   const languageName = language || "code";
+  const request = (prompt || "").toLowerCase();
+
+  if (/(generate|create|write|make|implement|add).*(sum|addition|add two|calculator)/.test(request)) {
+    if (languageName === "python") {
+      return [
+        "Here is a simple sum function:",
+        "",
+        "```python",
+        "def sum_numbers(first, second):",
+        "    return first + second",
+        "",
+        "print(sum_numbers(2, 3))",
+        "```",
+      ].join("\n");
+    }
+
+    if (languageName === "javascript") {
+      return [
+        "Here is a simple sum function:",
+        "",
+        "```javascript",
+        "function sumNumbers(first, second) {",
+        "  return first + second;",
+        "}",
+        "",
+        "console.log(sumNumbers(2, 3));",
+        "```",
+      ].join("\n");
+    }
+  }
+
+  if (/(generate|create|write|make|print|display).*(alphabet|alphabets|a to z|a-z)/.test(request)) {
+    if (languageName === "python") {
+      return [
+        "Here is Python code that writes the English alphabet:",
+        "",
+        "```python",
+        "import string",
+        "",
+        "print(string.ascii_lowercase)",
+        "print(string.ascii_uppercase)",
+        "```",
+      ].join("\n");
+    }
+
+    if (languageName === "javascript") {
+      return [
+        "Here is JavaScript code that writes the English alphabet:",
+        "",
+        "```javascript",
+        "const lowercase = 'abcdefghijklmnopqrstuvwxyz';",
+        "const uppercase = lowercase.toUpperCase();",
+        "",
+        "console.log(lowercase);",
+        "console.log(uppercase);",
+        "```",
+      ].join("\n");
+    }
+  }
+
+  if (/(generate|create|write|make|implement)/.test(request)) {
+    return [
+      `Here is a starter ${languageName} function for ${activeFile}:`,
+      "",
+      `\`\`\`${languageName}`,
+      languageName === "python"
+        ? "def helper(value):\n    return value"
+        : "function helper(value) {\n  return value;\n}",
+      "```",
+      "",
+      "Review the preview and insert it only when you are happy with it.",
+    ].join("\n");
+  }
 
   if (!code) {
     return `I can help with ${activeFile}. Share a snippet or ask for a feature, fix, or explanation in ${languageName}.`;

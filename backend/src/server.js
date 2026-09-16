@@ -15,6 +15,7 @@ const ExecutionQueue = require("./executionQueue");
 const { LIMITS, RUNNERS, executeInDocker } = require("./dockerExecutor");
 const { createVersionSnapshot, buildVersionLabel } = require("./versionHistory");
 const { generateAiReply, buildAiContext } = require("./aiService");
+const { analyzeProject, searchProject } = require("./projectAnalyzer");
 const logger = require("./logger");
 const { aiModel, corsOrigins, host, isProduction, jwtSecret, port } = require("./config/env");
 
@@ -86,6 +87,7 @@ app.use(
 app.use(helmet());
 app.use(express.json({ limit: "128kb" }));
 app.use(cookieParser());
+app.set("trust proxy", isProduction ? 1 : false);
 app.use(rateLimit({
   windowMs: 15 * 60 * 1000,
   limit: 300,
@@ -106,6 +108,44 @@ const authRateLimit = rateLimit({
     message: "Too many authentication attempts. Try again later.",
   },
 });
+const aiRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 30,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  message: { success: false, message: "AI usage limit reached. Try again later." },
+});
+const executionRateLimit = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 10,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  message: { success: false, message: "Execution limit reached. Try again shortly." },
+});
+const mutationRateLimit = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 60,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  message: { success: false, message: "Mutation limit reached. Try again shortly." },
+});
+
+async function recordAiUsage({ userId, roomId, feature, model, promptBytes, responseBytes, latencyMs, success }) {
+  try {
+    await pool.query(
+      `INSERT INTO ai_usage_events
+       (user_id, room_id, feature, model, prompt_bytes, response_bytes, latency_ms, success)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [userId, roomId || null, feature, model, promptBytes, responseBytes, latencyMs, success]
+    );
+  } catch (error) {
+    logger.warn("Could not record AI usage", { error: error.message });
+  }
+}
+
+function extractCodeBlock(value) {
+  return value.match(/```(?:[A-Za-z0-9_-]+)?\n([\s\S]*?)```/)?.[1]?.trim() || null;
+}
 
 // =========================
 // HTTP + Socket.IO Server
@@ -331,7 +371,7 @@ app.get("/api/me", authenticateToken, async (req, res) => {
 // =========================
 
 // Create room - authenticated user becomes owner
-app.post("/api/rooms", authenticateToken, async (req, res) => {
+app.post("/api/rooms", authenticateToken, mutationRateLimit, async (req, res) => {
   const { name } = req.body;
 
   if (!name) {
@@ -399,6 +439,7 @@ app.get("/api/rooms", authenticateToken, async (req, res) => {
 app.post(
   "/api/files",
   authenticateToken,
+  mutationRateLimit,
   authorizeRoomOwner,
   async (req, res) => {
     const { roomId, filename, language, content } = req.body;
@@ -485,6 +526,7 @@ app.get(
 app.put(
   "/api/files/:id",
   authenticateToken,
+  mutationRateLimit,
   async (req, res) => {
     const { id } = req.params;
     const { filename, language, content } = req.body;
@@ -687,6 +729,7 @@ app.post(
 app.get(
   "/api/files/:id",
   authenticateToken,
+  mutationRateLimit,
   async (req, res) => {
     const { id } = req.params;
 
@@ -863,7 +906,7 @@ app.post(
 // CODE EXECUTION
 // =========================
 
-app.post("/api/ai", authenticateToken, async (req, res) => {
+app.post("/api/ai", authenticateToken, aiRateLimit, async (req, res) => {
   const { prompt, currentFile, selectedCode, language, projectFiles } = req.body;
 
   if (!prompt || !prompt.trim()) {
@@ -886,6 +929,7 @@ app.post("/api/ai", authenticateToken, async (req, res) => {
     });
   }
 
+  const startedAt = Date.now();
   try {
     const result = await generateAiReply({
       prompt: safePrompt,
@@ -894,6 +938,17 @@ app.post("/api/ai", authenticateToken, async (req, res) => {
       language: safeLanguage,
       projectFiles: safeProjectFiles,
       model: aiModel,
+    });
+
+    void recordAiUsage({
+      userId: req.user.userId,
+      roomId: req.body.roomId,
+      feature: "assistant",
+      model: aiModel,
+      promptBytes: Buffer.byteLength(safePrompt, "utf8"),
+      responseBytes: Buffer.byteLength(result.reply || "", "utf8"),
+      latencyMs: Date.now() - startedAt,
+      success: result.success,
     });
 
     return res.json({
@@ -917,7 +972,111 @@ app.post("/api/ai", authenticateToken, async (req, res) => {
   }
 });
 
-app.post("/api/execute", authenticateToken, async (req, res) => {
+app.post(
+  "/api/ai/project",
+  authenticateToken,
+  aiRateLimit,
+  authorizeRoomOwner,
+  async (req, res) => {
+    const { question, projectFiles, roomId } = req.body;
+    if (!question || typeof question !== "string" || !question.trim()) {
+      return res.status(400).json({ success: false, message: "Project question is required" });
+    }
+
+    const files = Array.isArray(projectFiles) ? projectFiles.slice(0, 100) : [];
+    const matches = searchProject(question, files, 6);
+    const relevantFiles = matches.length > 0
+      ? files.filter((file) => matches.some((match) => match.filename === file.filename)).slice(0, 6)
+      : files.slice(0, 4);
+    const prompt = `Answer this project question using only the indexed project context: ${question.trim()}`;
+    const startedAt = Date.now();
+
+    try {
+      const result = await generateAiReply({
+        prompt,
+        currentFile: "project search",
+        language: "mixed",
+        selectedCode: "",
+        projectFiles: relevantFiles,
+        model: aiModel,
+      });
+      void recordAiUsage({
+        userId: req.user.userId,
+        roomId,
+        feature: "project_qa",
+        model: aiModel,
+        promptBytes: Buffer.byteLength(prompt, "utf8"),
+        responseBytes: Buffer.byteLength(result.reply || "", "utf8"),
+        latencyMs: Date.now() - startedAt,
+        success: result.success,
+      });
+      return res.json({
+        success: result.success,
+        mode: result.mode,
+        reply: result.reply,
+        matches,
+        indexedFiles: analyzeProject(files),
+      });
+    } catch (error) {
+      logger.error("Project AI request failed", { error: error.message });
+      return res.status(500).json({ success: false, message: "Project AI request failed" });
+    }
+  }
+);
+
+app.post(
+  "/api/ai/proposal",
+  authenticateToken,
+  aiRateLimit,
+  authorizeRoomOwner,
+  async (req, res) => {
+    const { roomId, filename, language, currentContent, prompt } = req.body;
+    if (!filename || typeof currentContent !== "string" || !prompt || !prompt.trim()) {
+      return res.status(400).json({ success: false, message: "filename, currentContent and prompt are required" });
+    }
+    if (Buffer.byteLength(currentContent, "utf8") > MAX_CODE_BYTES) {
+      return res.status(413).json({ success: false, message: "Current file is too large for a proposal" });
+    }
+
+    const proposalPrompt = `Propose a ${language || "code"} change for ${filename}. ${prompt.trim()} Return the proposed code in one fenced code block and explain the change briefly. Do not claim that the change was applied.`;
+    const startedAt = Date.now();
+    try {
+      const result = await generateAiReply({
+        prompt: proposalPrompt,
+        currentFile: filename,
+        language: language || "text",
+        selectedCode: currentContent,
+        projectFiles: [],
+        model: aiModel,
+      });
+      const proposedContent = extractCodeBlock(result.reply || "");
+      void recordAiUsage({
+        userId: req.user.userId,
+        roomId,
+        feature: "change_proposal",
+        model: aiModel,
+        promptBytes: Buffer.byteLength(proposalPrompt, "utf8"),
+        responseBytes: Buffer.byteLength(result.reply || "", "utf8"),
+        latencyMs: Date.now() - startedAt,
+        success: result.success,
+      });
+      return res.json({
+        success: result.success,
+        mode: result.mode,
+        explanation: result.reply,
+        requiresApproval: true,
+        changes: proposedContent
+          ? [{ filename, language: language || "text", operation: "replace", oldText: currentContent, newText: proposedContent }]
+          : [],
+      });
+    } catch (error) {
+      logger.error("AI proposal failed", { error: error.message });
+      return res.status(500).json({ success: false, message: "AI proposal failed" });
+    }
+  }
+);
+
+app.post("/api/execute", authenticateToken, executionRateLimit, async (req, res) => {
   const { roomId, fileId, code, language } = req.body;
 
   if (!roomId || typeof code !== "string" || !code.trim() || !language) {

@@ -30,3 +30,25 @@ test("fallback AI explanation stays grounded in the code and language", () => {
   assert.match(response.toLowerCase(), /python|print/);
   assert.ok(response.length > 20);
 });
+
+test("fallback AI generation returns insertable sum code", () => {
+  const response = getFallbackReply({
+    prompt: "Make simple code for sum of two numbers",
+    currentFile: "main.py",
+    language: "python",
+  });
+
+  assert.match(response, /```python/);
+  assert.match(response, /return first \+ second/);
+});
+
+test("fallback AI generation returns alphabet code", () => {
+  const response = getFallbackReply({
+    prompt: "Write the English alphabets from A to Z",
+    currentFile: "main.py",
+    language: "python",
+  });
+
+  assert.match(response, /```python/);
+  assert.match(response, /ascii_lowercase/);
+});

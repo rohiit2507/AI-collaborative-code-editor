@@ -28,10 +28,23 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - execution_data:/execution
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
     ports:
       - "5000:5000"
+
+  migrate:
+    build: ./backend
+    command: ["node", "src/migrate.js"]
+    environment:
+      NODE_ENV: production
+      DB_SSL: "false"
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-codecollab}
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   yjs:
     build: ./backend
@@ -41,6 +54,11 @@ services:
       YJS_HOST: 0.0.0.0
       YJS_PORT: 1234
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-codecollab}
+      DB_SSL: "false"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
     ports:
       - "1234:1234"
 

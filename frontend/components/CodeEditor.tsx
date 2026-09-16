@@ -122,7 +122,9 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
   const [showHistory, setShowHistory] = useState(false);
   const [aiInput, setAiInput] = useState("");
   const [aiResponse, setAiResponse] = useState<string>("");
+  const [generatedPreview, setGeneratedPreview] = useState<string>("");
   const [aiLoading, setAiLoading] = useState(false);
+  const [projectMatches, setProjectMatches] = useState<string[]>([]);
   const [selectedCode, setSelectedCode] = useState("");
   const [activeDocument, setActiveDocument] = useState(() => createYjsDocument());
   const providerRef = useRef<WebsocketProvider | null>(null);
@@ -507,11 +509,11 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
       nextProvider.off("status", handleStatus);
       nextProvider.off("sync", handleSync);
       nextProvider.awareness.off("change", updateParticipants);
-      nextProvider.destroy();
-      providerRef.current = null;
       bindingRequestRef.current += 1;
       bindingRef.current?.destroy();
       bindingRef.current = null;
+        nextProvider.destroy();
+        providerRef.current = null;
       setParticipants([]);
     };
   }, [activeFileId, attachMonacoBinding, doc, files, roomId, syncLocalCursorState]);
@@ -627,7 +629,38 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
     }
   };
 
-  const handleAskAi = async (promptOverride?: string) => {
+  const extractCodeBlock = (value: string) => {
+    const match = value.match(/```(?:[A-Za-z0-9_-]+)?\n([\s\S]*?)```/);
+    return match?.[1]?.trim() || null;
+  };
+
+  const applyGeneratedCode = (value: string) => {
+    const editor = editorRef.current;
+    const model = editor?.getModel();
+
+    if (!editor || !model) {
+      return;
+    }
+
+    const trimmedValue = value.trim();
+    if (!trimmedValue) {
+      return;
+    }
+
+    const selection = editor.getSelection() ?? model.getFullModelRange();
+    const patch = trimmedValue.endsWith("\n") ? trimmedValue : `${trimmedValue}\n`;
+
+    editor.executeEdits("ai-insert", [
+      {
+        range: selection,
+        text: patch,
+        forceMoveMarkers: true,
+      },
+    ]);
+    editor.focus();
+  };
+
+  const handleAskAi = async (promptOverride?: string, options?: { autoInsert?: boolean; previewOnly?: boolean }) => {
     const prompt = (promptOverride ?? aiInput).trim();
     if (!prompt) {
       return;
@@ -662,13 +695,65 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
 
       if (!response.ok) {
         setAiResponse(data.message || "AI request failed.");
+        setGeneratedPreview("");
         return;
       }
 
-      setAiResponse(data.reply || "AI did not return a response.");
-      setAiInput("");
+      const reply = data.reply || "AI did not return a response.";
+      const extractedCode = extractCodeBlock(reply);
+      const nextPreview = extractedCode || reply;
+
+      setAiResponse(reply);
+      setGeneratedPreview(options?.previewOnly || !options?.autoInsert ? nextPreview : "");
+
+      if (options?.autoInsert && extractedCode) {
+        applyGeneratedCode(extractedCode);
+      }
+
+      if (!promptOverride) {
+        setAiInput("");
+      }
     } catch {
       setAiResponse("Could not reach the AI backend.");
+      setGeneratedPreview("");
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  const handleAskProject = async () => {
+    const question = aiInput.trim();
+    if (!question) {
+      return;
+    }
+
+    setAiLoading(true);
+    setAiResponse("Searching the project...");
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/ai/project`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          roomId: Number(roomId),
+          question,
+          projectFiles: files.map((file) => ({
+            filename: file.filename,
+            language: file.language,
+            content: file.content,
+          })),
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setAiResponse(data.message || "Project search failed.");
+        return;
+      }
+      setAiResponse(data.reply || "No project answer returned.");
+      setProjectMatches((data.matches || []).map((match: { filename: string }) => match.filename));
+      setAiInput("");
+    } catch {
+      setAiResponse("Could not reach the project assistant.");
     } finally {
       setAiLoading(false);
     }
@@ -1125,6 +1210,13 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
 
             <button onClick={handleRun}>Run</button>
             <button onClick={() => void handleSave()}>Save</button>
+            <button onClick={() => void handleAskAi("Explain this code", { previewOnly: true })}>Explain</button>
+            <button onClick={() => void handleAskAi("Fix this code", { previewOnly: true })}>Fix</button>
+            <button onClick={() => void handleAskAi(`Generate ${language} code for a useful helper function`, { previewOnly: true })}>Generate</button>
+            <button onClick={() => void handleAskAi(`Review this ${language} code for bugs and quality issues`, { previewOnly: true })}>Review</button>
+            <button onClick={() => void handleAskAi(`Write tests for this ${language} code`, { previewOnly: true })}>Tests</button>
+            <button onClick={() => void handleAskAi(`Add docstrings and comments for this ${language} code`, { previewOnly: true })}>Doc</button>
+            <button onClick={() => void handleAskProject()}>Ask project</button>
           </div>
 
           {showHistory && activeFileId ? (
@@ -1348,6 +1440,23 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
               {aiResponse || "Ask for an explanation, fix, optimization, or code generation."}
             </div>
 
+            {projectMatches.length > 0 ? (
+              <div style={{ marginTop: "8px", color: "#93c5fd" }}>
+                Relevant files: {projectMatches.join(", ")}
+              </div>
+            ) : null}
+
+            {generatedPreview ? (
+              <div style={{ marginTop: "10px", padding: "10px", borderRadius: "8px", background: "#0f172a", border: "1px solid #374151" }}>
+                <div style={{ marginBottom: "8px", color: "#cbd5e1", fontWeight: 600 }}>Generated preview</div>
+                <pre style={{ whiteSpace: "pre-wrap", margin: 0 }}>{generatedPreview}</pre>
+                <div style={{ marginTop: "8px", display: "flex", gap: "8px" }}>
+                  <button onClick={() => applyGeneratedCode(generatedPreview)}>Insert into editor</button>
+                  <button onClick={() => setGeneratedPreview("")}>Clear preview</button>
+                </div>
+              </div>
+            ) : null}
+
             <div style={{ display: "flex", gap: "8px", marginTop: "10px" }}>
               <input
                 value={aiInput}
@@ -1370,6 +1479,15 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
               <button onClick={() => void handleAskAi()} disabled={aiLoading}>
                 {aiLoading ? "Working..." : "Send"}
               </button>
+            </div>
+
+            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginTop: "10px" }}>
+              <button onClick={() => void handleAskAi("Explain this code", { previewOnly: true })}>Explain</button>
+              <button onClick={() => void handleAskAi("Fix this code", { previewOnly: true })}>Fix</button>
+              <button onClick={() => void handleAskAi(`Generate ${language} code for a useful helper function`, { previewOnly: true })}>Generate</button>
+              <button onClick={() => void handleAskAi(`Review this ${language} code for bugs and quality issues`, { previewOnly: true })}>Review</button>
+              <button onClick={() => void handleAskAi(`Write tests for this ${language} code`, { previewOnly: true })}>Tests</button>
+              <button onClick={() => void handleAskAi(`Add docstrings and comments for this ${language} code`, { previewOnly: true })}>Doc</button>
             </div>
           </div>
 

@@ -1,0 +1,15 @@
+CREATE TABLE IF NOT EXISTS ai_usage_events (
+  id BIGSERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  room_id INTEGER REFERENCES rooms(id) ON DELETE SET NULL,
+  feature VARCHAR(64) NOT NULL,
+  model VARCHAR(128) NOT NULL,
+  prompt_bytes INTEGER NOT NULL DEFAULT 0,
+  response_bytes INTEGER NOT NULL DEFAULT 0,
+  latency_ms INTEGER NOT NULL DEFAULT 0,
+  success BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS ai_usage_user_created_idx
+  ON ai_usage_events (user_id, created_at DESC);

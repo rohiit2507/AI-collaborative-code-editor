@@ -120,6 +120,10 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
   const [versionHistory, setVersionHistory] = useState<FileVersion[]>([]);
   const [showHistory, setShowHistory] = useState(false);
+  const [aiInput, setAiInput] = useState("");
+  const [aiResponse, setAiResponse] = useState<string>("");
+  const [aiLoading, setAiLoading] = useState(false);
+  const [selectedCode, setSelectedCode] = useState("");
   const [activeDocument, setActiveDocument] = useState(() => createYjsDocument());
   const providerRef = useRef<WebsocketProvider | null>(null);
   const editorRef = useRef<MonacoEditor.IStandaloneCodeEditor | null>(null);
@@ -536,6 +540,14 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
 
     editor.onDidChangeCursorSelection(() => {
       syncLocalCursorState();
+      const selection = editor.getSelection();
+      if (!selection) {
+        setSelectedCode("");
+        return;
+      }
+
+      const selected = editor.getModel()?.getValueInRange(selection) ?? "";
+      setSelectedCode(selected);
     });
 
     syncLocalCursorState();
@@ -612,6 +624,53 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
       setStatus("Room link copied to clipboard.");
     } catch {
       setStatus("Could not copy the room link automatically.");
+    }
+  };
+
+  const handleAskAi = async (promptOverride?: string) => {
+    const prompt = (promptOverride ?? aiInput).trim();
+    if (!prompt) {
+      return;
+    }
+
+    const currentFile = files.find((file) => file.id === activeFileId)?.filename ?? "untitled";
+
+    setAiLoading(true);
+    setAiResponse("Thinking...");
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/ai`, {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          prompt,
+          currentFile,
+          selectedCode: selectedCode || text.toString(),
+          language,
+          projectFiles: files.map((file) => ({
+            filename: file.filename,
+            language: file.language,
+            content: file.content,
+          })),
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        setAiResponse(data.message || "AI request failed.");
+        return;
+      }
+
+      setAiResponse(data.reply || "AI did not return a response.");
+      setAiInput("");
+    } catch {
+      setAiResponse("Could not reach the AI backend.");
+    } finally {
+      setAiLoading(false);
     }
   };
 
@@ -1273,6 +1332,46 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
               Create or select a file to begin editing.
             </div>
           )}
+
+          <div
+            style={{
+              marginTop: "15px",
+              padding: "15px",
+              background: "#111827",
+              color: "white",
+              border: "1px solid #374151",
+              borderRadius: "10px",
+            }}
+          >
+            <strong>AI Assistant</strong>
+            <div style={{ marginTop: "10px", padding: "10px", background: "#1f2937", borderRadius: "8px", whiteSpace: "pre-wrap" }}>
+              {aiResponse || "Ask for an explanation, fix, optimization, or code generation."}
+            </div>
+
+            <div style={{ display: "flex", gap: "8px", marginTop: "10px" }}>
+              <input
+                value={aiInput}
+                onChange={(event) => setAiInput(event.target.value)}
+                placeholder="Ask AI..."
+                style={{
+                  flex: 1,
+                  padding: "8px",
+                  borderRadius: "6px",
+                  border: "1px solid #374151",
+                  background: "#0f172a",
+                  color: "#f9fafb",
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    void handleAskAi();
+                  }
+                }}
+              />
+              <button onClick={() => void handleAskAi()} disabled={aiLoading}>
+                {aiLoading ? "Working..." : "Send"}
+              </button>
+            </div>
+          </div>
 
           <div
             style={{

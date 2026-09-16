@@ -14,8 +14,9 @@ const socketAuth = require("./middleware/socketAuth");
 const ExecutionQueue = require("./executionQueue");
 const { LIMITS, RUNNERS, executeInDocker } = require("./dockerExecutor");
 const { createVersionSnapshot, buildVersionLabel } = require("./versionHistory");
+const { generateAiReply, buildAiContext } = require("./aiService");
 const logger = require("./logger");
-const { corsOrigins, host, isProduction, jwtSecret, port } = require("./config/env");
+const { aiModel, corsOrigins, host, isProduction, jwtSecret, port } = require("./config/env");
 
 const app = express();
 const PORT = port;
@@ -861,6 +862,60 @@ app.post(
 // =========================
 // CODE EXECUTION
 // =========================
+
+app.post("/api/ai", authenticateToken, async (req, res) => {
+  const { prompt, currentFile, selectedCode, language, projectFiles } = req.body;
+
+  if (!prompt || !prompt.trim()) {
+    return res.status(400).json({
+      success: false,
+      message: "Prompt is required",
+    });
+  }
+
+  const safePrompt = prompt.trim();
+  const safeCurrentFile = typeof currentFile === "string" ? currentFile : "untitled";
+  const safeSelectedCode = typeof selectedCode === "string" ? selectedCode : "";
+  const safeLanguage = typeof language === "string" ? language : "text";
+  const safeProjectFiles = Array.isArray(projectFiles) ? projectFiles.slice(0, 10) : [];
+
+  if (Buffer.byteLength(safePrompt, "utf8") > 32 * 1024) {
+    return res.status(413).json({
+      success: false,
+      message: "Prompt is too large.",
+    });
+  }
+
+  try {
+    const result = await generateAiReply({
+      prompt: safePrompt,
+      currentFile: safeCurrentFile,
+      selectedCode: safeSelectedCode,
+      language: safeLanguage,
+      projectFiles: safeProjectFiles,
+      model: aiModel,
+    });
+
+    return res.json({
+      success: result.success,
+      mode: result.mode,
+      reply: result.reply,
+      context: buildAiContext({
+        currentFile: safeCurrentFile,
+        language: safeLanguage,
+        selectedCode: safeSelectedCode,
+        projectFiles: safeProjectFiles,
+        prompt: safePrompt,
+      }),
+    });
+  } catch (error) {
+    logger.error("AI request failed", { error: error.message });
+    return res.status(500).json({
+      success: false,
+      message: "AI request failed",
+    });
+  }
+});
 
 app.post("/api/execute", authenticateToken, async (req, res) => {
   const { roomId, fileId, code, language } = req.body;

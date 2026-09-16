@@ -38,7 +38,7 @@ Output → Users
 📍 Current Implementation Tracker
 
 | Roadmap phase                                        | Current status                                                                                                   |
-| ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | --- | ------------------------- | -------------------------------------------------------- |
 | Phase 1 — Basic Code Editor                          | ✅ Complete                                                                                                      |
 | Phase 2 — Backend Architecture                       | ✅ Complete foundation                                                                                           |
 | Phase 3–4 — WebSocket and Collaboration              | ✅ Complete foundation                                                                                           |
@@ -47,7 +47,8 @@ Output → Users
 | Part 7 — Project & File Management                   | ✅ Complete                                                                                                      |
 | Part 8 — Advanced Collaboration & Communication      | ✅ Foundation complete                                                                                           |
 | Part 9 — Secure Code Execution                       | ✅ API, Docker worker, limits, queue, structured results complete; Docker runtime verification pending           |
-| Part 10 — Production Readiness, Testing & Deployment | ✅ Security baseline, tests, containers, CI, migrations, and docs complete; live deployment verification pending |
+| Part 10 — Production Readiness, Testing & Deployment | ✅ Security baseline, tests, containers, CI, migrations, and docs complete; live deployment verification pending |     | Part 11 — Version History | ✅ File snapshots, restore flow, and history UI complete |
+| Part 12 — AI Coding Assistant                        | ✅ AI backend, project-aware prompts, and editor assistant panel complete                                        |
 
 Authentication and room-owner authorization were implemented early to secure the current collaboration flow. The current Yjs server verifies the JWT HTTP-only cookie and only allows the room owner to connect. Room-member roles will be expanded in the later authentication phase.
 
@@ -413,7 +414,30 @@ Restore version
 
 Interview mein ye achha discussion point banega.
 
-Phase 12 — Scaling Architecture
+Status: ✅ Core snapshot and restore flow implemented with database-backed file versions and UI restore actions.
+
+Phase 12 — AI Coding Assistant
+
+Time: 3–6 days
+
+Ab project intelligent assistant layer add karo.
+
+Core features:
+
+- AI backend service
+- Authenticated AI endpoint
+- Project-aware prompt context
+- File + selection + language awareness
+- Explain, fix, optimize, refactor, generate tests
+- Debugging support based on execution output
+
+Why important:
+
+This turns the collaborative editor from a sync tool into a real AI-enabled IDE.
+
+Status: ✅ Backend AI service, project-aware context, and editor assistant panel implemented.
+
+Phase 13 — Scaling Architecture
 
 Time: 4–7 days
 

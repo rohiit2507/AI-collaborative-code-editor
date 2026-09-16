@@ -24,6 +24,7 @@ const corsOrigins = (process.env.CORS_ORIGIN || defaultCorsOrigins.join(","))
   .filter(Boolean);
 
 module.exports = {
+  aiModel: process.env.AI_MODEL || "gpt-4o-mini",
   backendUrl: process.env.BACKEND_URL || "http://localhost:5000",
   corsOrigins,
   databaseUrl: process.env.DATABASE_URL,

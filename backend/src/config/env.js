@@ -32,6 +32,7 @@ module.exports = {
   aiModel: process.env.AI_MODEL || "gpt-4o-mini",
   backendUrl: process.env.BACKEND_URL || "http://localhost:5000",
   corsOrigins,
+  cookieDomain: process.env.COOKIE_DOMAIN || undefined,
   databaseUrl: process.env.DATABASE_URL,
   frontendUrl: process.env.FRONTEND_URL || "http://localhost:3000",
   host: process.env.HOST || "0.0.0.0",

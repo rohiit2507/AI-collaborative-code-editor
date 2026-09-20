@@ -22,7 +22,15 @@ const { createVersionSnapshot, buildVersionLabel } = require("./versionHistory")
 const { generateAiReply, buildAiContext } = require("./aiService");
 const { analyzeProject, searchProject } = require("./projectAnalyzer");
 const logger = require("./logger");
-const { aiModel, corsOrigins, host, isProduction, jwtSecret, port } = require("./config/env");
+const {
+  aiModel,
+  cookieDomain,
+  corsOrigins,
+  host,
+  isProduction,
+  jwtSecret,
+  port,
+} = require("./config/env");
 
 const app = express();
 const PORT = port;
@@ -311,6 +319,7 @@ app.post("/api/login", authRateLimit, async (req, res) => {
 
     // Store JWT in HTTP-only cookie
     res.cookie("token", token, {
+      ...(cookieDomain ? { domain: cookieDomain } : {}),
       httpOnly: true,
       secure: isProduction,
       sameSite: isProduction ? "strict" : "lax",

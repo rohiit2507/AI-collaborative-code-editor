@@ -133,6 +133,8 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
   const bindingsRef = useRef(new Map<WebsocketProvider, { destroy: () => void }>());
   const bindingRequestRef = useRef(0);
   const documentsRef = useRef<Record<number, ReturnType<typeof createYjsDocument>>>({});
+  const filesRef = useRef(files);
+  filesRef.current = files;
 
   const { doc, text } = activeDocument;
 
@@ -146,7 +148,13 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
       }
 
       if (bindingRef.current) {
-        bindingRef.current.destroy();
+        const previousBinding = bindingRef.current;
+        previousBinding.destroy();
+        bindingsRef.current.forEach((binding, provider) => {
+          if (binding === previousBinding) {
+            bindingsRef.current.delete(provider);
+          }
+        });
         bindingRef.current = null;
       }
       const requestId = ++bindingRequestRef.current;
@@ -413,7 +421,7 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
             return null;
           }
 
-          const activeFile = files.find((file) => file.id === activeFileIdInAwareness);
+          const activeFile = filesRef.current.find((file) => file.id === activeFileIdInAwareness);
 
           return {
             clientId,
@@ -460,7 +468,7 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
 
     const handleStatus = (event: { status: string }) => {
       if (event.status === "connected") {
-        setStatus(`Connected to ${files.find((file) => file.id === activeFileId)?.filename ?? "file"}`);
+        setStatus(`Connected to ${filesRef.current.find((file) => file.id === activeFileId)?.filename ?? "file"}`);
       } else {
         setStatus(`Yjs: ${event.status}`);
       }
@@ -471,7 +479,7 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
         return;
       }
 
-      setStatus(`Synced ${files.find((file) => file.id === activeFileId)?.filename ?? "file"}`);
+      setStatus(`Synced ${filesRef.current.find((file) => file.id === activeFileId)?.filename ?? "file"}`);
     };
 
     const loadPresence = async () => {
@@ -529,7 +537,7 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
       }
       setParticipants([]);
     };
-  }, [activeFileId, attachMonacoBinding, doc, files, roomId, syncLocalCursorState]);
+  }, [activeFileId, attachMonacoBinding, doc, roomId, syncLocalCursorState]);
 
   useEffect(() => {
     if (!activeFileId || !activeDocument) {

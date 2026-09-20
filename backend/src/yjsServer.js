@@ -58,15 +58,21 @@ async function authorizeRoomConnection(request) {
   }
 
   const result = await pool.query(
-    `SELECT owner_id
-     FROM rooms
-     WHERE id = $1`,
-    [roomId]
+    `SELECT r.owner_id,
+            EXISTS (
+              SELECT 1
+              FROM room_members rm
+              WHERE rm.room_id = r.id AND rm.user_id = $2
+            ) AS is_member
+     FROM rooms r
+     WHERE r.id = $1`,
+    [roomId, user.userId]
   );
 
   return (
     result.rows.length === 1 &&
-    String(result.rows[0].owner_id) === String(user.userId)
+    (String(result.rows[0].owner_id) === String(user.userId) ||
+      result.rows[0].is_member)
   );
 }
 

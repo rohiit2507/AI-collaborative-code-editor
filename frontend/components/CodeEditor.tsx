@@ -130,6 +130,7 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
   const providerRef = useRef<WebsocketProvider | null>(null);
   const editorRef = useRef<MonacoEditor.IStandaloneCodeEditor | null>(null);
   const bindingRef = useRef<{ destroy: () => void } | null>(null);
+  const bindingsRef = useRef(new Map<WebsocketProvider, { destroy: () => void }>());
   const bindingRequestRef = useRef(0);
   const documentsRef = useRef<Record<number, ReturnType<typeof createYjsDocument>>>({});
 
@@ -144,8 +145,10 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
         return;
       }
 
-      bindingRef.current?.destroy();
-      bindingRef.current = null;
+      if (bindingRef.current) {
+        bindingRef.current.destroy();
+        bindingRef.current = null;
+      }
       const requestId = ++bindingRequestRef.current;
 
       void import("y-monaco").then(({ MonacoBinding }) => {
@@ -156,12 +159,14 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
           return;
         }
 
-        bindingRef.current = new MonacoBinding(
+        const binding = new MonacoBinding(
           text,
           model,
           new Set([editor]),
           nextProvider.awareness
         );
+        bindingsRef.current.set(nextProvider, binding);
+        bindingRef.current = binding;
       });
     },
     [text]
@@ -505,15 +510,23 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
 
     return () => {
       abortController.abort();
+      const binding = bindingsRef.current.get(nextProvider);
+      if (binding) {
+        binding.destroy();
+        bindingsRef.current.delete(nextProvider);
+        if (bindingRef.current === binding) {
+          bindingRef.current = null;
+        }
+      }
       nextProvider.awareness.setLocalState(null);
       nextProvider.off("status", handleStatus);
       nextProvider.off("sync", handleSync);
       nextProvider.awareness.off("change", updateParticipants);
       bindingRequestRef.current += 1;
-      bindingRef.current?.destroy();
-      bindingRef.current = null;
-        nextProvider.destroy();
+      nextProvider.destroy();
+      if (providerRef.current === nextProvider) {
         providerRef.current = null;
+      }
       setParticipants([]);
     };
   }, [activeFileId, attachMonacoBinding, doc, files, roomId, syncLocalCursorState]);
@@ -560,12 +573,12 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
   };
 
   useEffect(() => {
-    socket.connect();
-
-    socket.emit("join_room", Number(roomId));
-
     const handleRoomUsers = (users: RoomUser[]) => {
       setRoomUsers(users);
+    };
+
+    const handleConnect = () => {
+      socket.emit("join_room", Number(roomId));
     };
 
     const handleRoomMessage = (message: ChatMessage) => {
@@ -585,12 +598,21 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
       );
     };
 
+    socket.on("connect", handleConnect);
     socket.on("room_users", handleRoomUsers);
     socket.on("room_message", handleRoomMessage);
     socket.on("user_typing", handleUserTyping);
     socket.on("user_left", handleUserLeft);
 
+    if (socket.connected) {
+      handleConnect();
+    } else {
+      socket.connect();
+    }
+
     return () => {
+      socket.emit("leave_room", Number(roomId));
+      socket.off("connect", handleConnect);
       socket.off("room_users", handleRoomUsers);
       socket.off("room_message", handleRoomMessage);
       socket.off("user_typing", handleUserTyping);

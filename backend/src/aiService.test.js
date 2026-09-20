@@ -52,3 +52,19 @@ test("fallback AI generation returns alphabet code", () => {
   assert.match(response, /```python/);
   assert.match(response, /ascii_lowercase/);
 });
+
+test("fallback AI recognizes natural alphabet and sum prompts", () => {
+  const alphabetResponse = getFallbackReply({
+    prompt: "Give me code for writing alphabets of English",
+    currentFile: "main.py",
+    language: "python",
+  });
+  const sumResponse = getFallbackReply({
+    prompt: "Give me simple code for sum",
+    currentFile: "main.py",
+    language: "python",
+  });
+
+  assert.match(alphabetResponse, /ascii_uppercase/);
+  assert.match(sumResponse, /return first \+ second/);
+});

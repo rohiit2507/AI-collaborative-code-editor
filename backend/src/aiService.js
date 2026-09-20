@@ -32,7 +32,7 @@ function getFallbackReply({ prompt, currentFile, selectedCode, language }) {
   const languageName = language || "code";
   const request = (prompt || "").toLowerCase();
 
-  if (/(generate|create|write|make|implement|add).*(sum|addition|add two|calculator)/.test(request)) {
+  if (/(sum|addition|add two|calculator)/.test(request)) {
     if (languageName === "python") {
       return [
         "Here is a simple sum function:",
@@ -61,7 +61,7 @@ function getFallbackReply({ prompt, currentFile, selectedCode, language }) {
     }
   }
 
-  if (/(generate|create|write|make|print|display).*(alphabet|alphabets|a to z|a-z)/.test(request)) {
+  if (/(alphabet|alphabets|a to z|a-z)/.test(request)) {
     if (languageName === "python") {
       return [
         "Here is Python code that writes the English alphabet:",

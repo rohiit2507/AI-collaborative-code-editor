@@ -10,6 +10,11 @@ const jwt = require("jsonwebtoken");
 const cookieParser = require("cookie-parser");
 const authenticateToken = require("./middleware/authMiddleware");
 const authorizeRoomOwner = require("./middleware/roomAuthorization");
+const {
+  authorizeRoomMember,
+  authorizeFileMember,
+  getRoomAccess,
+} = require("./middleware/roomAuthorization");
 const socketAuth = require("./middleware/socketAuth");
 const ExecutionQueue = require("./executionQueue");
 const { LIMITS, RUNNERS, executeInDocker } = require("./dockerExecutor");
@@ -432,6 +437,141 @@ app.get("/api/rooms", authenticateToken, async (req, res) => {
     });
   }
 });
+
+app.post(
+  "/api/rooms/:roomId/members",
+  authenticateToken,
+  mutationRateLimit,
+  authorizeRoomOwner,
+  async (req, res) => {
+    const { roomId } = req.params;
+    const userId = Number(req.body.userId);
+
+    if (!Number.isInteger(userId) || userId <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "A valid userId is required",
+      });
+    }
+
+    if (userId === Number(req.user.userId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Room owners already have access",
+      });
+    }
+
+    try {
+      const userResult = await pool.query(
+        `SELECT id, username, email
+         FROM users
+         WHERE id = $1`,
+        [userId]
+      );
+
+      if (userResult.rows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: "User not found",
+        });
+      }
+
+      const result = await pool.query(
+        `INSERT INTO room_members (room_id, user_id)
+         VALUES ($1, $2)
+         RETURNING id, room_id, user_id, created_at`,
+        [roomId, userId]
+      );
+
+      res.status(201).json({
+        success: true,
+        member: {
+          ...result.rows[0],
+          user: userResult.rows[0],
+        },
+      });
+    } catch (error) {
+      if (error.code === "23505") {
+        return res.status(409).json({
+          success: false,
+          message: "User is already a member of this room",
+        });
+      }
+
+      console.error(error);
+      res.status(500).json({
+        success: false,
+        message: "Failed to add room member",
+      });
+    }
+  }
+);
+
+app.get(
+  "/api/rooms/:roomId/members",
+  authenticateToken,
+  authorizeRoomMember,
+  async (req, res) => {
+    try {
+      const result = await pool.query(
+        `SELECT rm.id, rm.room_id, rm.user_id, rm.created_at,
+                u.username, u.email
+         FROM room_members rm
+         JOIN users u ON u.id = rm.user_id
+         WHERE rm.room_id = $1
+         ORDER BY rm.created_at ASC`,
+        [req.params.roomId]
+      );
+
+      res.json({
+        success: true,
+        members: result.rows,
+      });
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({
+        success: false,
+        message: "Failed to load room members",
+      });
+    }
+  }
+);
+
+app.delete(
+  "/api/rooms/:roomId/members/:userId",
+  authenticateToken,
+  mutationRateLimit,
+  authorizeRoomOwner,
+  async (req, res) => {
+    try {
+      const result = await pool.query(
+        `DELETE FROM room_members
+         WHERE room_id = $1 AND user_id = $2
+         RETURNING id, room_id, user_id`,
+        [req.params.roomId, req.params.userId]
+      );
+
+      if (result.rows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: "Room member not found",
+        });
+      }
+
+      res.json({
+        success: true,
+        member: result.rows[0],
+      });
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({
+        success: false,
+        message: "Failed to remove room member",
+      });
+    }
+  }
+);
+
 // =========================
 // FILES
 // =========================
@@ -440,7 +580,7 @@ app.post(
   "/api/files",
   authenticateToken,
   mutationRateLimit,
-  authorizeRoomOwner,
+  authorizeRoomMember,
   async (req, res) => {
     const { roomId, filename, language, content } = req.body;
 
@@ -494,7 +634,7 @@ app.post(
 app.get(
   "/api/files/room/:roomId",
   authenticateToken,
-  authorizeRoomOwner,
+  authorizeRoomMember,
   async (req, res) => {
     const { roomId } = req.params;
 
@@ -527,6 +667,7 @@ app.put(
   "/api/files/:id",
   authenticateToken,
   mutationRateLimit,
+  authorizeFileMember,
   async (req, res) => {
     const { id } = req.params;
     const { filename, language, content } = req.body;
@@ -547,9 +688,14 @@ app.put(
              updated_at = CURRENT_TIMESTAMP
          WHERE id = $4
            AND room_id IN (
-             SELECT id
-             FROM rooms
-             WHERE owner_id = $5
+             SELECT r.id
+             FROM rooms r
+             WHERE r.owner_id = $5
+                OR EXISTS (
+                  SELECT 1
+                  FROM room_members rm
+                  WHERE rm.room_id = r.id AND rm.user_id = $5
+                )
            )
          RETURNING *`,
         [
@@ -610,6 +756,7 @@ app.put(
 app.get(
   "/api/files/:id/versions",
   authenticateToken,
+  authorizeFileMember,
   async (req, res) => {
     const { id } = req.params;
 
@@ -619,7 +766,12 @@ app.get(
          FROM file_versions fv
          JOIN files f ON f.id = fv.file_id
          JOIN rooms r ON r.id = f.room_id
-         WHERE fv.file_id = $1 AND r.owner_id = $2
+         WHERE fv.file_id = $1
+           AND (r.owner_id = $2 OR EXISTS (
+             SELECT 1
+             FROM room_members rm
+             WHERE rm.room_id = r.id AND rm.user_id = $2
+           ))
          ORDER BY fv.version_number DESC`,
         [id, req.user.userId]
       );
@@ -648,6 +800,7 @@ app.get(
 app.post(
   "/api/files/:id/restore",
   authenticateToken,
+  authorizeFileMember,
   async (req, res) => {
     const { id } = req.params;
     const { versionNumber } = req.body;
@@ -665,7 +818,12 @@ app.post(
          FROM file_versions fv
          JOIN files f ON f.id = fv.file_id
          JOIN rooms r ON r.id = f.room_id
-         WHERE fv.file_id = $1 AND fv.version_number = $2 AND r.owner_id = $3`,
+         WHERE fv.file_id = $1 AND fv.version_number = $2
+           AND (r.owner_id = $3 OR EXISTS (
+             SELECT 1
+             FROM room_members rm
+             WHERE rm.room_id = r.id AND rm.user_id = $3
+           ))`,
         [id, versionNumber, req.user.userId]
       );
 
@@ -730,6 +888,7 @@ app.get(
   "/api/files/:id",
   authenticateToken,
   mutationRateLimit,
+  authorizeFileMember,
   async (req, res) => {
     const { id } = req.params;
 
@@ -739,7 +898,11 @@ app.get(
          FROM files f
          JOIN rooms r ON f.room_id = r.id
          WHERE f.id = $1
-           AND r.owner_id = $2`,
+           AND (r.owner_id = $2 OR EXISTS (
+             SELECT 1
+             FROM room_members rm
+             WHERE rm.room_id = r.id AND rm.user_id = $2
+           ))`,
         [id, req.user.userId]
       );
 
@@ -769,6 +932,7 @@ app.get(
 app.delete(
   "/api/files/:id",
   authenticateToken,
+  authorizeFileMember,
   async (req, res) => {
     const { id } = req.params;
 
@@ -780,6 +944,11 @@ app.delete(
              SELECT id
              FROM rooms
              WHERE owner_id = $2
+                OR EXISTS (
+                  SELECT 1
+                  FROM room_members rm
+                  WHERE rm.room_id = rooms.id AND rm.user_id = $2
+                )
            )
          RETURNING *`,
         [id, req.user.userId]
@@ -814,6 +983,7 @@ app.delete(
 app.get(
   "/api/rooms/:roomId/messages",
   authenticateToken,
+  authorizeRoomMember,
   async (req, res) => {
     const { roomId } = req.params;
 
@@ -844,6 +1014,7 @@ app.get(
 app.post(
   "/api/rooms/:roomId/messages",
   authenticateToken,
+  authorizeRoomMember,
   async (req, res) => {
     const { roomId } = req.params;
     const { message } = req.body;
@@ -856,28 +1027,6 @@ app.post(
     }
 
     try {
-      const roomResult = await pool.query(
-        `SELECT id, owner_id
-         FROM rooms
-         WHERE id = $1`,
-        [roomId]
-      );
-
-      if (roomResult.rows.length === 0) {
-        return res.status(404).json({
-          success: false,
-          message: "Room not found",
-        });
-      }
-
-      const room = roomResult.rows[0];
-      if (String(room.owner_id) !== String(req.user.userId)) {
-        return res.status(403).json({
-          success: false,
-          message: "You are not authorized to chat in this room",
-        });
-      }
-
       const result = await pool.query(
         `INSERT INTO room_messages (room_id, user_id, username, message)
          VALUES ($1, $2, $3, $4)
@@ -976,7 +1125,7 @@ app.post(
   "/api/ai/project",
   authenticateToken,
   aiRateLimit,
-  authorizeRoomOwner,
+  authorizeRoomMember,
   async (req, res) => {
     const { question, projectFiles, roomId } = req.body;
     if (!question || typeof question !== "string" || !question.trim()) {
@@ -1028,7 +1177,7 @@ app.post(
   "/api/ai/proposal",
   authenticateToken,
   aiRateLimit,
-  authorizeRoomOwner,
+  authorizeRoomMember,
   async (req, res) => {
     const { roomId, filename, language, currentContent, prompt } = req.body;
     if (!filename || typeof currentContent !== "string" || !prompt || !prompt.trim()) {
@@ -1104,14 +1253,9 @@ app.post("/api/execute", authenticateToken, executionRateLimit, async (req, res)
   }
 
   try {
-    const roomResult = await pool.query(
-      `SELECT id, owner_id
-       FROM rooms
-       WHERE id = $1`,
-      [roomId]
-    );
+    const room = await getRoomAccess(roomId, req.user.userId);
 
-    if (roomResult.rows.length === 0) {
+    if (!room) {
       return res.status(404).json({
         success: false,
         status: "system_error",
@@ -1119,7 +1263,10 @@ app.post("/api/execute", authenticateToken, executionRateLimit, async (req, res)
       });
     }
 
-    if (String(roomResult.rows[0].owner_id) !== String(req.user.userId)) {
+    if (
+      String(room.owner_id) !== String(req.user.userId) &&
+      !room.is_member
+    ) {
       return res.status(403).json({
         success: false,
         status: "system_error",
@@ -1191,21 +1338,56 @@ function getRoomUsers(roomName) {
     return [];
   }
 
-  return Array.from(room).reduce((users, socketId) => {
+  const usersById = new Map();
+
+  Array.from(room).forEach((socketId) => {
     const clientSocket = io.sockets.sockets.get(socketId);
 
     if (!clientSocket?.user) {
-      return users;
+      return;
     }
 
-    users.push({
-      socketId,
-      userId: clientSocket.user.userId,
-      username: clientSocket.user.username,
-    });
+    const userId = String(clientSocket.user.userId);
+    if (!usersById.has(userId)) {
+      usersById.set(userId, {
+        socketId,
+        userId: clientSocket.user.userId,
+        username: clientSocket.user.username,
+      });
+    }
+  });
 
-    return users;
-  }, []);
+  return Array.from(usersById.values());
+}
+
+function emitRoomUsers(roomName) {
+  io.to(roomName).emit("room_users", getRoomUsers(roomName));
+}
+
+function leaveSocketRoom(socket) {
+  const roomId = socket.data.roomId;
+  if (!roomId) {
+    return null;
+  }
+
+  const roomName = `room_${roomId}`;
+  socket.leave(roomName);
+  socket.data.roomId = null;
+  emitRoomUsers(roomName);
+
+  const userStillPresent = getRoomUsers(roomName).some(
+    (user) => String(user.userId) === String(socket.user?.userId)
+  );
+
+  if (!userStillPresent) {
+    io.to(roomName).emit("user_left", {
+      socketId: socket.id,
+      userId: socket.user?.userId,
+      username: socket.user?.username,
+    });
+  }
+
+  return roomName;
 }
 
 // =========================
@@ -1220,10 +1402,15 @@ io.on("connection", (socket) => {
   socket.on("join_room", async (roomId) => {
     try {
       const result = await pool.query(
-        `SELECT id, name, owner_id
-         FROM rooms
-         WHERE id = $1`,
-        [roomId]
+        `SELECT r.id, r.name, r.owner_id,
+                EXISTS (
+                  SELECT 1
+                  FROM room_members rm
+                  WHERE rm.room_id = r.id AND rm.user_id = $2
+                ) AS is_member
+         FROM rooms r
+         WHERE r.id = $1`,
+        [roomId, socket.user.userId]
       );
 
       if (result.rows.length === 0) {
@@ -1236,7 +1423,10 @@ io.on("connection", (socket) => {
 
       const room = result.rows[0];
 
-      if (room.owner_id !== socket.user.userId) {
+      if (
+        String(room.owner_id) !== String(socket.user.userId) &&
+        !room.is_member
+      ) {
         socket.emit("room_error", {
           message: "You are not authorized to join this room",
         });
@@ -1245,6 +1435,12 @@ io.on("connection", (socket) => {
       }
 
       const roomName = `room_${roomId}`;
+      const wasAlreadyInRoom =
+        socket.data.roomId === roomId && socket.rooms.has(roomName);
+      if (socket.data.roomId && socket.data.roomId !== roomId) {
+        leaveSocketRoom(socket);
+      }
+
       socket.data.roomId = roomId;
       socket.join(roomName);
 
@@ -1252,8 +1448,7 @@ io.on("connection", (socket) => {
         `User ${socket.user.userId} joined ${roomName}`
       );
 
-      const members = getRoomUsers(roomName);
-      io.to(roomName).emit("room_users", members);
+      emitRoomUsers(roomName);
 
       socket.emit("room_joined", {
         roomId,
@@ -1261,17 +1456,30 @@ io.on("connection", (socket) => {
         username: socket.user.username,
       });
 
-      socket.to(roomName).emit("user_joined", {
-        socketId: socket.id,
-        userId: socket.user.userId,
-        username: socket.user.username,
-      });
+      if (
+        !wasAlreadyInRoom &&
+        getRoomUsers(roomName).filter(
+          (user) => String(user.userId) === String(socket.user.userId)
+        ).length === 1
+      ) {
+        socket.to(roomName).emit("user_joined", {
+          socketId: socket.id,
+          userId: socket.user.userId,
+          username: socket.user.username,
+        });
+      }
     } catch (error) {
       console.error("Room join error:", error);
 
       socket.emit("room_error", {
         message: "Failed to join room",
       });
+    }
+  });
+
+  socket.on("leave_room", (roomId) => {
+    if (socket.data.roomId === roomId) {
+      leaveSocketRoom(socket);
     }
   });
 
@@ -1321,19 +1529,11 @@ io.on("connection", (socket) => {
     });
   });
 
-  socket.on("disconnect", () => {
-    const roomId = socket.data.roomId;
-    if (roomId) {
-      const roomName = `room_${roomId}`;
-      const members = getRoomUsers(roomName);
-      io.to(roomName).emit("room_users", members);
-      io.to(roomName).emit("user_left", {
-        socketId: socket.id,
-        userId: socket.user?.userId,
-        username: socket.user?.username,
-      });
-    }
+  socket.on("disconnecting", () => {
+    leaveSocketRoom(socket);
+  });
 
+  socket.on("disconnect", () => {
     console.log(
       `User disconnected: ${socket.id} | User ID: ${socket.user?.userId}`
     );

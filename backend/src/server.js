@@ -21,6 +21,7 @@ const { LIMITS, RUNNERS, executeInDocker } = require("./dockerExecutor");
 const { createVersionSnapshot, buildVersionLabel } = require("./versionHistory");
 const { generateAiReply, buildAiContext } = require("./aiService");
 const { analyzeProject, searchProject } = require("./projectAnalyzer");
+const { createYjsToken, YJS_TOKEN_TTL } = require("./yjsAuth");
 const logger = require("./logger");
 const {
   aiModel,
@@ -378,6 +379,14 @@ app.get("/api/me", authenticateToken, async (req, res) => {
       message: "Failed to retrieve user",
     });
   }
+});
+
+app.get("/api/yjs/token", authenticateToken, (req, res) => {
+  res.json({
+    success: true,
+    token: createYjsToken(req.user, jwtSecret),
+    expiresIn: YJS_TOKEN_TTL,
+  });
 });
 
 // =========================

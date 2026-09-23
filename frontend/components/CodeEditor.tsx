@@ -126,6 +126,7 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
   const [aiLoading, setAiLoading] = useState(false);
   const [projectMatches, setProjectMatches] = useState<string[]>([]);
   const [selectedCode, setSelectedCode] = useState("");
+  const [yjsToken, setYjsToken] = useState<string | null>(null);
   const [activeDocument, setActiveDocument] = useState(() => createYjsDocument());
   const providerRef = useRef<WebsocketProvider | null>(null);
   const editorRef = useRef<MonacoEditor.IStandaloneCodeEditor | null>(null);
@@ -368,6 +369,46 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
   }, [loadRoomFiles, loadRoomMessages]);
 
   useEffect(() => {
+    const abortController = new AbortController();
+    setYjsToken(null);
+
+    const refreshYjsToken = async () => {
+      const response = await fetch(`${API_BASE_URL}/api/yjs/token`, {
+        credentials: "include",
+        signal: abortController.signal,
+      });
+      const data = (await response.json()) as { token?: string; message?: string };
+      if (!response.ok || !data.token) {
+        throw new Error(data.message || "Could not authenticate Yjs");
+      }
+
+      if (providerRef.current) {
+        (providerRef.current as WebsocketProvider & { params: Record<string, string> }).params.token = data.token;
+      }
+      setYjsToken((currentToken) => currentToken || data.token || null);
+    };
+
+    void refreshYjsToken().catch((error) => {
+      if (error.name !== "AbortError") {
+        setStatus("Could not authenticate Yjs.");
+      }
+    });
+
+    const refreshInterval = window.setInterval(() => {
+      void refreshYjsToken().catch((error) => {
+        if (error.name !== "AbortError") {
+          setStatus("Could not refresh Yjs authentication.");
+        }
+      });
+    }, 60_000);
+
+    return () => {
+      window.clearInterval(refreshInterval);
+      abortController.abort();
+    };
+  }, [roomId]);
+
+  useEffect(() => {
     void loadVersionHistory(activeFileId);
   }, [activeFileId, loadVersionHistory]);
 
@@ -393,11 +434,11 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
   }, [activeFileId, files]);
 
   useEffect(() => {
-    if (!activeFileId) {
+    if (!activeFileId || !yjsToken) {
       return;
     }
 
-    const nextProvider = createYjsProvider(roomId, doc, activeFileId);
+    const nextProvider = createYjsProvider(roomId, doc, activeFileId, yjsToken);
     const abortController = new AbortController();
 
     providerRef.current = nextProvider;
@@ -537,7 +578,7 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
       }
       setParticipants([]);
     };
-  }, [activeFileId, attachMonacoBinding, doc, roomId, syncLocalCursorState]);
+  }, [activeFileId, attachMonacoBinding, doc, roomId, syncLocalCursorState, yjsToken]);
 
   useEffect(() => {
     if (!activeFileId || !activeDocument) {

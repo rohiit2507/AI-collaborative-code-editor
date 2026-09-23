@@ -1,12 +1,13 @@
 const http = require("http");
 const WebSocket = require("ws");
-const jwt = require("jsonwebtoken");
 const Y = require("yjs");
 const syncProtocol = require("y-protocols/sync");
 const awarenessProtocol = require("y-protocols/awareness");
 const encoding = require("lib0/encoding");
 const decoding = require("lib0/decoding");
 const pool = require("./config/db");
+const { authorizeYjsRoom, verifyYjsToken } = require("./yjsAuth");
+const { jwtSecret } = require("./config/env");
 
 const HOST = process.env.YJS_HOST || "0.0.0.0";
 const PORT = Number(process.env.YJS_PORT || 1234);
@@ -15,18 +16,6 @@ const MESSAGE_SYNC = 0;
 const MESSAGE_AWARENESS = 1;
 const PING_INTERVAL_MS = 30_000;
 const documents = new Map();
-
-function parseCookies(cookieHeader = "") {
-  return cookieHeader.split(";").reduce((cookies, cookie) => {
-    const [name, ...valueParts] = cookie.trim().split("=");
-
-    if (name) {
-      cookies[name] = valueParts.join("=");
-    }
-
-    return cookies;
-  }, {});
-}
 
 function getRoomId(requestUrl) {
   const url = new URL(requestUrl || "/", "http://localhost");
@@ -43,37 +32,17 @@ async function authorizeRoomConnection(request) {
     return false;
   }
 
-  const token = parseCookies(request.headers.cookie).token;
-
-  if (!token) {
-    return false;
-  }
+  const url = new URL(request.url || "/", "http://localhost");
+  const token = url.searchParams.get("token");
 
   let user;
-
   try {
-    user = jwt.verify(token, process.env.JWT_SECRET);
+    user = verifyYjsToken(token, jwtSecret);
   } catch {
     return false;
   }
 
-  const result = await pool.query(
-    `SELECT r.owner_id,
-            EXISTS (
-              SELECT 1
-              FROM room_members rm
-              WHERE rm.room_id = r.id AND rm.user_id = $2
-            ) AS is_member
-     FROM rooms r
-     WHERE r.id = $1`,
-    [roomId, user.userId]
-  );
-
-  return (
-    result.rows.length === 1 &&
-    (String(result.rows[0].owner_id) === String(user.userId) ||
-      result.rows[0].is_member)
-  );
+  return authorizeYjsRoom(pool, roomId, user.userId);
 }
 
 function send(document, connection, message) {

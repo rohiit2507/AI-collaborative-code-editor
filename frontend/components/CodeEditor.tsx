@@ -125,6 +125,10 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
   const [versionHistory, setVersionHistory] = useState<FileVersion[]>([]);
   const [showHistory, setShowHistory] = useState(false);
+  const [selectedVersion, setSelectedVersion] = useState<FileVersion | null>(null);
+  const [versionLoading, setVersionLoading] = useState(false);
+  const [versionError, setVersionError] = useState("");
+  const [restoringVersion, setRestoringVersion] = useState<number | null>(null);
   const [aiInput, setAiInput] = useState("");
   const [aiResponse, setAiResponse] = useState<string>("");
   const [aiMessages, setAiMessages] = useState<AiMessage[]>([]);
@@ -335,9 +339,12 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
   const loadVersionHistory = useCallback(async (fileId: number | null) => {
     if (!fileId) {
       setVersionHistory([]);
+      setSelectedVersion(null);
       return;
     }
 
+    setVersionLoading(true);
+    setVersionError("");
     try {
       const response = await fetch(`${API_BASE_URL}/api/files/${fileId}/versions`, {
         credentials: "include",
@@ -346,12 +353,20 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
 
       if (!response.ok) {
         setVersionHistory([]);
+        setSelectedVersion(null);
+        setVersionError(data.message || "Could not load version history.");
         return;
       }
 
-      setVersionHistory(Array.isArray(data.versions) ? data.versions : []);
+      const nextVersions = Array.isArray(data.versions) ? data.versions : [];
+      setVersionHistory(nextVersions);
+      setSelectedVersion((current) => current && nextVersions.some((version: FileVersion) => version.id === current.id) ? current : nextVersions[0] ?? null);
     } catch {
       setVersionHistory([]);
+      setSelectedVersion(null);
+      setVersionError("Could not load version history.");
+    } finally {
+      setVersionLoading(false);
     }
   }, []);
 
@@ -1041,6 +1056,12 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
       return;
     }
 
+    const confirmed = window.confirm(`Restore Version ${version.versionNumber}? This will replace the current file content.`);
+    if (!confirmed) {
+      return;
+    }
+
+    setRestoringVersion(version.versionNumber);
     try {
       const response = await fetch(`${API_BASE_URL}/api/files/${activeFileId}/restore`, {
         method: "POST",
@@ -1085,6 +1106,8 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
       void loadVersionHistory(activeFileId);
     } catch {
       setStatus("Could not restore this version.");
+    } finally {
+      setRestoringVersion(null);
     }
   };
 
@@ -1306,44 +1329,10 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
           </div>
 
           {showHistory && activeFileId ? (
-            <div
-              style={{
-                marginBottom: "12px",
-                padding: "12px",
-                border: "1px solid #374151",
-                borderRadius: "10px",
-                background: "#111827",
-                color: "#f9fafb",
-              }}
-            >
-              <strong>Version History</strong>
-              {versionHistory.length === 0 ? (
-                <div style={{ marginTop: "8px", color: "#9ca3af" }}>No saved versions for this file yet.</div>
-              ) : (
-                <div style={{ marginTop: "10px", display: "grid", gap: "8px" }}>
-                  {versionHistory.map((version) => (
-                    <div
-                      key={version.id}
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        gap: "10px",
-                        alignItems: "center",
-                        padding: "8px 10px",
-                        borderRadius: "8px",
-                        background: "#1f2937",
-                      }}
-                    >
-                      <div>
-                        <strong>Version {version.versionNumber}</strong>
-                        <div style={{ color: "#cbd5e1", fontSize: "12px" }}>{version.summary}</div>
-                      </div>
-                      <button onClick={() => void handleRestoreVersion(version)}>Restore</button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
+            <section className="cc-history-panel" aria-label="Version history">
+              <div className="cc-history-header"><div><span className="cc-eyebrow">File timeline</span><strong>Version History</strong><small>{versionHistory.length} saved {versionHistory.length === 1 ? "version" : "versions"}</small></div><span className="cc-history-file">{files.find((file) => file.id === activeFileId)?.filename}</span></div>
+              {versionLoading ? <div className="cc-history-state"><span className="cc-spinner" />Loading saved versions...</div> : versionError ? <div className="cc-history-state cc-history-error">{versionError}</div> : versionHistory.length === 0 ? <div className="cc-history-state"><strong>No saved versions yet.</strong><span>Save this file to start a useful timeline.</span></div> : <div className="cc-history-layout"><div className="cc-history-list">{versionHistory.map((version, index) => <button className={selectedVersion?.id === version.id ? "cc-history-item cc-history-item-selected" : "cc-history-item"} key={version.id} onClick={() => setSelectedVersion(version)}><span className="cc-history-dot" /><span><strong>Version {version.versionNumber}</strong><small>{version.summary || "Saved file state"}</small><em>{index === 0 ? "Latest" : `Snapshot ${version.versionNumber}`}</em></span></button>)}</div>{selectedVersion ? <div className="cc-history-preview"><div className="cc-history-preview-header"><div><span className="cc-history-badge">Historical preview</span><strong>Version {selectedVersion.versionNumber}</strong><small>{selectedVersion.filename} · {selectedVersion.language}</small></div><button className="cc-button-primary" disabled={restoringVersion !== null} onClick={() => void handleRestoreVersion(selectedVersion)}>{restoringVersion === selectedVersion.versionNumber ? "Restoring..." : "Restore version"}</button></div><pre>{selectedVersion.content || "This version has no content."}</pre><p>This is a preview. Your current file will not change until you restore this version.</p></div> : <div className="cc-history-state">Select a snapshot to preview its code.</div>}</div>}
+            </section>
           ) : null}
 
           <div className="cc-editor-tabs" style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "10px" }}>

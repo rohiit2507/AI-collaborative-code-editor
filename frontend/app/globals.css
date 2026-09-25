@@ -41,6 +41,7 @@ body {
   font-family: var(--font-geist-sans), sans-serif;
   margin: 0;
   min-width: 320px;
+  overflow-x: hidden;
 }
 
 ::selection {
@@ -79,6 +80,15 @@ button:active:not(:disabled) {
 button:disabled {
   cursor: not-allowed;
   opacity: 0.48;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--cc-red);
+  outline-offset: 3px;
 }
 
 input,
@@ -645,6 +655,7 @@ ul {
   padding: 1rem;
   position: fixed;
   z-index: 20;
+  overflow-y: auto;
 }
 
 .cc-modal {
@@ -653,6 +664,8 @@ ul {
   border-radius: var(--cc-radius-lg);
   box-shadow: var(--cc-shadow);
   max-width: 430px;
+  max-height: calc(100dvh - 2rem);
+  overflow-y: auto;
   padding: 2rem;
   position: relative;
   width: 100%;
@@ -1223,5 +1236,40 @@ ul {
     align-items: flex-start;
     flex-direction: column;
     gap: 0.7rem;
+  }
+}
+
+@media (max-width: 760px) {
+  .cc-ide-shell {
+    padding: 0.75rem !important;
+  }
+
+  .cc-ide-layout {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .cc-file-sidebar {
+    min-height: auto !important;
+  }
+
+  .cc-file-sidebar .cc-sidebar-panel {
+    display: none;
+  }
+
+  .cc-editor-column {
+    width: 100%;
+  }
+
+  .cc-editor-toolbar,
+  .cc-ide-actions {
+    gap: 0.35rem !important;
+  }
+
+  .cc-editor-toolbar button,
+  .cc-editor-toolbar select,
+  .cc-ide-actions button {
+    font-size: 0.75rem;
+    min-height: 34px;
+    padding: 0.35rem 0.5rem;
   }
 }

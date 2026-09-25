@@ -1080,7 +1080,7 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
   };
 
   return (
-    <div style={{ padding: "20px" }}>
+    <div className="cc-ide-shell" style={{ padding: "20px" }}>
       <div
         style={{
           display: "flex",
@@ -1090,7 +1090,10 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
           flexWrap: "wrap",
         }}
       >
-        <button
+        <div className="cc-ide-topbar">
+        <div className="cc-ide-title"><span className="cc-brand-mark">C</span><div><strong>CodeCollab</strong><small>Room {roomId} / {files.find((file) => file.id === activeFileId)?.filename ?? "workspace"}</small></div></div>
+        <div className="cc-ide-actions">
+        <button className="cc-button-primary"
           onClick={() => {
             const newName = `file-${files.length + 1}.py`;
             void createNewFile(newName, language || "python", "");
@@ -1106,9 +1109,12 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
           {showHistory ? "Hide History" : "Version History"}
         </button>
         <button onClick={handleCopyShareLink}>Share Room</button>
+        </div>
+      </div>
       </div>
 
       <div
+        className="cc-ide-layout"
         style={{
           display: "grid",
           gridTemplateColumns: "260px minmax(0, 1fr)",
@@ -1116,7 +1122,7 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
           alignItems: "start",
         }}
       >
-        <aside
+        <aside className="cc-file-sidebar"
           style={{
             background: "#111827",
             color: "#f9fafb",
@@ -1126,13 +1132,13 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
             minHeight: "220px",
           }}
         >
-          <strong>Project Files</strong>
+          <div className="cc-panel-heading"><strong>Project Files</strong><span className="cc-panel-kicker">{files.length} files</span></div>
           <div style={{ marginTop: "12px", display: "grid", gap: "8px" }}>
             {files.length === 0 ? (
               <span>No files yet</span>
             ) : (
               files.map((file) => (
-                <button
+                <button className={file.id === activeFileId ? "cc-file-button cc-file-button-active" : "cc-file-button"}
                   key={file.id}
                   onClick={() => {
                     const content = documentsRef.current[file.id]?.text.toString() ?? file.content ?? "";
@@ -1155,7 +1161,7 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
             )}
           </div>
 
-          <div
+          <div className="cc-sidebar-panel"
             style={{
               marginTop: "20px",
               paddingTop: "12px",
@@ -1192,7 +1198,7 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
             </div>
           </div>
 
-          <div
+          <div className="cc-sidebar-panel"
             style={{
               marginTop: "20px",
               paddingTop: "12px",
@@ -1263,8 +1269,8 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
           </div>
         </aside>
 
-        <div>
-          <div
+        <div className="cc-editor-column">
+          <div className="cc-editor-toolbar"
             style={{
               display: "flex",
               gap: "10px",
@@ -1331,7 +1337,7 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
             </div>
           ) : null}
 
-          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "10px" }}>
+          <div className="cc-editor-tabs" style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "10px" }}>
             {openFileIds.length === 0 ? (
               <span>No open tabs</span>
             ) : (
@@ -1350,6 +1356,7 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
                       const content = documentsRef.current[file.id]?.text.toString() ?? file.content ?? "";
                       openFile(file.id, content);
                     }}
+                    className={isActive ? "cc-editor-tab cc-editor-tab-active" : "cc-editor-tab"}
                     style={{
                       padding: "6px 10px",
                       borderRadius: "8px",
@@ -1389,12 +1396,12 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
             )}
           </div>
 
-          <p>
+          <p className="cc-editor-location">
             Room: {roomId} | Active file: {files.find((file) => file.id === activeFileId)?.filename ?? "None"}
           </p>
-          <p>{status}</p>
+          <p className="cc-status">{status}</p>
 
-          <section
+          <section className="cc-presence-strip"
             aria-label="Room presence"
             style={{
               marginBottom: "12px",
@@ -1496,7 +1503,7 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
             </div>
           )}
 
-          <div
+          <div className="cc-ai-panel"
             style={{
               marginTop: "15px",
               padding: "15px",
@@ -1562,7 +1569,7 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
             </div>
           </div>
 
-          <div
+          <div className="cc-output-panel"
             style={{
               marginTop: "15px",
               padding: "15px",

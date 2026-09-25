@@ -11,10 +11,13 @@ export default function RoomPage({
   const { roomId } = use(params);
 
   return (
-    <main>
-      <h1>CodeCollab Room</h1>
+    <main className="cc-shell">
+      <header style={{ margin: "0 auto", maxWidth: "1400px", padding: "0 0 18px" }}>
+        <div className="cc-eyebrow">Collaborative session</div>
+        <h1>CodeCollab Room</h1>
 
-      <p>Room ID: {roomId}</p>
+        <p>Room ID: {roomId}</p>
+      </header>
 
       <CodeEditor roomId={roomId} />
     </main>

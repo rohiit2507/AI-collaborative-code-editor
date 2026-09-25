@@ -435,10 +435,15 @@ app.get("/api/rooms", authenticateToken, async (req, res) => {
     const ownerId = req.user.userId;
 
     const result = await pool.query(
-      `SELECT id, name, owner_id, created_at
-       FROM rooms
-       WHERE owner_id = $1
-       ORDER BY created_at DESC`,
+      `SELECT r.id, r.name, r.owner_id, r.created_at,
+              u.username AS owner_username,
+              COUNT(rm.id)::int AS member_count
+       FROM rooms r
+       JOIN users u ON u.id = r.owner_id
+       LEFT JOIN room_members rm ON rm.room_id = r.id
+       WHERE r.owner_id = $1
+       GROUP BY r.id, u.username
+       ORDER BY r.created_at DESC`,
       [ownerId]
     );
 
@@ -455,6 +460,64 @@ app.get("/api/rooms", authenticateToken, async (req, res) => {
     });
   }
 });
+
+app.put(
+  "/api/rooms/:roomId",
+  authenticateToken,
+  mutationRateLimit,
+  authorizeRoomOwner,
+  async (req, res) => {
+    const name = typeof req.body.name === "string" ? req.body.name.trim() : "";
+    if (!name) {
+      return res.status(400).json({ success: false, message: "Room name is required" });
+    }
+
+    try {
+      const result = await pool.query(
+        `UPDATE rooms
+         SET name = $1
+         WHERE id = $2 AND owner_id = $3
+         RETURNING id, name, owner_id, created_at`,
+        [name, req.params.roomId, req.user.userId]
+      );
+
+      if (result.rows.length === 0) {
+        return res.status(404).json({ success: false, message: "Room not found" });
+      }
+
+      res.json({ success: true, room: result.rows[0] });
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ success: false, message: "Failed to rename room" });
+    }
+  }
+);
+
+app.delete(
+  "/api/rooms/:roomId",
+  authenticateToken,
+  mutationRateLimit,
+  authorizeRoomOwner,
+  async (req, res) => {
+    try {
+      const result = await pool.query(
+        `DELETE FROM rooms
+         WHERE id = $1 AND owner_id = $2
+         RETURNING id, name`,
+        [req.params.roomId, req.user.userId]
+      );
+
+      if (result.rows.length === 0) {
+        return res.status(404).json({ success: false, message: "Room not found" });
+      }
+
+      res.json({ success: true, room: result.rows[0] });
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ success: false, message: "Failed to delete room" });
+    }
+  }
+);
 
 app.post(
   "/api/rooms/:roomId/members",

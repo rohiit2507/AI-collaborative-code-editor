@@ -19,13 +19,13 @@ flowchart TD
 	Browser[Next.js IDE] --> API[Express API]
 	Browser <--> YJS[Yjs WebSocket]
 	API --> DB[(PostgreSQL)]
-	API --> AI[OpenAI API]
+	API --> AI[Google Gemini API]
 	API --> Queue[Bounded execution queue]
 	Queue --> Sandbox[Separate Docker sandbox]
 	YJS --> DB
 ```
 
-The browser receives only `NEXT_PUBLIC_BACKEND_URL` and `NEXT_PUBLIC_YJS_URL`. The OpenAI key, JWT secret, database URL, and Docker access remain server-side.
+The browser receives only `NEXT_PUBLIC_BACKEND_URL` and `NEXT_PUBLIC_YJS_URL`. The Gemini key, JWT secret, database URL, and Docker access remain server-side.
 
 See [architecture.md](architecture.md) for the responsibility boundaries, trust model, and scaling direction.
 
@@ -45,7 +45,7 @@ docker compose up --build
 
 ## Environment variables
 
-Backend: `DATABASE_URL`, `JWT_SECRET`, `OPENAI_API_KEY`, `AI_MODEL`, `FRONTEND_URL`, `CORS_ORIGIN`, and `YJS_URL`. Frontend: `NEXT_PUBLIC_BACKEND_URL` and `NEXT_PUBLIC_YJS_URL` only. Never commit production secrets.
+Backend: `DATABASE_URL`, `JWT_SECRET`, `GEMINI_API_KEY`, `GEMINI_MODEL`, `FRONTEND_URL`, `CORS_ORIGIN`, and `YJS_URL`. Frontend: `NEXT_PUBLIC_BACKEND_URL` and `NEXT_PUBLIC_YJS_URL` only. Never commit production secrets.
 
 ## API and security
 

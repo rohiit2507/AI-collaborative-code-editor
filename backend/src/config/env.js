@@ -28,8 +28,8 @@ if (isProduction && corsOrigins.some((origin) => origin.startsWith("http://"))) 
 }
 
 module.exports = {
-  aiApiKey: process.env.OPENAI_API_KEY,
-  aiModel: process.env.AI_MODEL || "gpt-4o-mini",
+  geminiApiKey: process.env.GEMINI_API_KEY,
+  aiModel: process.env.GEMINI_MODEL || "gemini-2.5-flash",
   backendUrl: process.env.BACKEND_URL || "http://localhost:5000",
   corsOrigins,
   cookieDomain: process.env.COOKIE_DOMAIN || undefined,

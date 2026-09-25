@@ -90,6 +90,11 @@ interface RoomUser {
   username: string;
 }
 
+interface AiMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
 const PRESENCE_COLORS = [
   "#ef4444",
   "#f97316",
@@ -122,6 +127,7 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
   const [showHistory, setShowHistory] = useState(false);
   const [aiInput, setAiInput] = useState("");
   const [aiResponse, setAiResponse] = useState<string>("");
+  const [aiMessages, setAiMessages] = useState<AiMessage[]>([]);
   const [generatedPreview, setGeneratedPreview] = useState<string>("");
   const [aiLoading, setAiLoading] = useState(false);
   const [projectMatches, setProjectMatches] = useState<string[]>([]);
@@ -741,6 +747,7 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
 
     setAiLoading(true);
     setAiResponse("Thinking...");
+    setAiMessages((previous) => [...previous, { role: "user", content: prompt }]);
 
     try {
       const response = await fetch(`${API_BASE_URL}/api/ai`, {
@@ -775,6 +782,7 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
       const nextPreview = extractedCode || reply;
 
       setAiResponse(reply);
+      setAiMessages((previous) => [...previous, { role: "assistant", content: reply }]);
       setGeneratedPreview(options?.previewOnly || !options?.autoInsert ? nextPreview : "");
 
       if (options?.autoInsert && extractedCode) {
@@ -786,6 +794,7 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
       }
     } catch {
       setAiResponse("Could not reach the AI backend.");
+      setAiMessages((previous) => [...previous, { role: "assistant", content: "Could not reach the AI backend." }]);
       setGeneratedPreview("");
     } finally {
       setAiLoading(false);
@@ -1513,9 +1522,9 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
               borderRadius: "10px",
             }}
           >
-            <strong>AI Assistant</strong>
-            <div style={{ marginTop: "10px", padding: "10px", background: "#1f2937", borderRadius: "8px", whiteSpace: "pre-wrap" }}>
-              {aiResponse || "Ask for an explanation, fix, optimization, or code generation."}
+            <div className="cc-ai-heading"><div><span className="cc-ai-orb">✦</span><strong>AI Assistant</strong></div><span className="cc-ai-model">Gemini</span></div>
+            <div className="cc-ai-messages" aria-live="polite">
+              {aiMessages.length === 0 ? <div className="cc-ai-empty"><span>✦</span><strong>Ask the room’s coding partner.</strong><small>Explain code, diagnose a bug, generate a helper, or ask about the project.</small></div> : aiMessages.map((message, index) => <div className={message.role === "user" ? "cc-ai-message cc-ai-message-user" : "cc-ai-message cc-ai-message-assistant"} key={`${message.role}-${index}`}><span className="cc-ai-message-label">{message.role === "user" ? "You" : "Gemini"}</span><div>{message.content}</div></div>)}
             </div>
 
             {projectMatches.length > 0 ? (

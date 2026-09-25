@@ -23,8 +23,8 @@ services:
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3000}
       COOKIE_DOMAIN: ${COOKIE_DOMAIN:-}
-      AI_MODEL: ${AI_MODEL:-gpt-4o-mini}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       BACKEND_URL: ${BACKEND_URL:-http://localhost:5000}
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
       YJS_URL: ${YJS_URL:-ws://localhost:1234}

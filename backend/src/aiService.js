@@ -1,4 +1,5 @@
-const { jwtSecret } = require("./config/env");
+const { geminiApiKey } = require("./config/env");
+const { GoogleGenAI } = require("@google/genai");
 
 function buildAiContext({
   currentFile,
@@ -119,7 +120,7 @@ async function generateAiReply({
   projectFiles,
   model,
 }) {
-  const apiKey = process.env.OPENAI_API_KEY || process.env.AI_API_KEY;
+  const apiKey = geminiApiKey;
 
   if (!apiKey) {
     return {
@@ -129,57 +130,24 @@ async function generateAiReply({
     };
   }
 
-  if (!jwtSecret) {
-    return {
-      success: true,
-      mode: "fallback",
-      reply: getFallbackReply({ prompt, currentFile, selectedCode, language }),
-    };
-  }
-
-  const requestBody = {
-    model: model || process.env.AI_MODEL || "gpt-4o-mini",
-    messages: [
-      {
-        role: "system",
-        content: "You are a helpful coding assistant for a collaborative IDE.",
-      },
-      {
-        role: "user",
-        content: buildAiContext({
-          currentFile,
-          language,
-          selectedCode,
-          projectFiles,
-          prompt,
-        }),
-      },
-    ],
-    temperature: 0.3,
-    max_tokens: 400,
-  };
-
   try {
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
+    const ai = new GoogleGenAI({ apiKey });
+    const response = await ai.models.generateContent({
+      model: model || "gemini-2.5-flash",
+      contents: buildAiContext({
+        currentFile,
+        language,
+        selectedCode,
+        projectFiles,
+        prompt,
+      }),
+      config: {
+        systemInstruction: "You are a helpful coding assistant for a collaborative IDE. Keep responses concise, practical, and safe. Use fenced code blocks with the relevant language when returning code.",
+        temperature: 0.3,
+        maxOutputTokens: 400,
       },
-      body: JSON.stringify(requestBody),
     });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      return {
-        success: false,
-        mode: "error",
-        reply: `AI service error: ${errorText.slice(0, 160) || "Unknown error"}`,
-      };
-    }
-
-    const payload = await response.json();
-    const message = payload.choices?.[0]?.message?.content;
+    const message = response.text || "";
 
     return {
       success: true,

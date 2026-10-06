@@ -352,6 +352,20 @@ app.post("/api/login", authRateLimit, async (req, res) => {
   }
 });
 
+app.post("/api/logout", (req, res) => {
+  res.clearCookie("token", {
+    ...(cookieDomain ? { domain: cookieDomain } : {}),
+    httpOnly: true,
+    secure: isProduction,
+    sameSite: isProduction ? "strict" : "lax",
+  });
+
+  res.json({
+    success: true,
+    message: "Logged out",
+  });
+});
+
 // =========================
 // PROTECTED USER PROFILE
 // =========================
@@ -448,6 +462,44 @@ app.post("/api/rooms", authenticateToken, mutationRateLimit, async (req, res) =>
   }
 });
 
+app.post("/api/rooms/validate", async (req, res) => {
+  const joinCode = normalizeRoomJoinCode(req.body?.joinCode ?? req.body?.code ?? "");
+
+  if (!joinCode) {
+    return res.status(400).json({
+      success: false,
+      message: "A valid room join code is required",
+    });
+  }
+
+  try {
+    const roomResult = await pool.query(
+      `SELECT id, name, owner_id, join_code
+       FROM rooms
+       WHERE join_code = $1`,
+      [joinCode]
+    );
+
+    if (roomResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Invalid room code",
+      });
+    }
+
+    res.json({
+      success: true,
+      room: roomResult.rows[0],
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({
+      success: false,
+      message: "Could not validate room code",
+    });
+  }
+});
+
 app.post("/api/rooms/join", authenticateToken, mutationRateLimit, async (req, res) => {
   const joinCode = normalizeRoomJoinCode(req.body?.joinCode ?? req.body?.code ?? "");
 
@@ -469,7 +521,7 @@ app.post("/api/rooms/join", authenticateToken, mutationRateLimit, async (req, re
     if (roomResult.rows.length === 0) {
       return res.status(404).json({
         success: false,
-        message: "Room not found for that join code",
+        message: "Invalid room code",
       });
     }
 

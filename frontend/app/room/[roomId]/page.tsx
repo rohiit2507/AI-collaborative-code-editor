@@ -146,7 +146,7 @@ export default function RoomPage({
         </div>
       </header>
 
-      <CodeEditor roomId={roomId} />
+      <CodeEditor roomId={roomId} roomName={room.name} joinCode={room.join_code ?? ""} />
     </main>
   );
 }

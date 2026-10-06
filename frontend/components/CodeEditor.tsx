@@ -11,6 +11,8 @@ import { API_BASE_URL } from "@/lib/config";
 
 interface CodeEditorProps {
   roomId: string;
+  roomName: string;
+  joinCode: string;
 }
 
 interface RoomFile {
@@ -110,7 +112,7 @@ function getPresenceColor(userId: number) {
   return PRESENCE_COLORS[userId % PRESENCE_COLORS.length];
 }
 
-export default function CodeEditor({ roomId }: CodeEditorProps) {
+export default function CodeEditor({ roomId, roomName, joinCode }: CodeEditorProps) {
   const [language, setLanguage] = useState("python");
   const [output, setOutput] = useState("");
   const [executionResult, setExecutionResult] = useState<ExecutionResult | null>(null);
@@ -125,6 +127,7 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
   const [versionHistory, setVersionHistory] = useState<FileVersion[]>([]);
   const [showHistory, setShowHistory] = useState(false);
+  const [showShareRoom, setShowShareRoom] = useState(false);
   const [selectedVersion, setSelectedVersion] = useState<FileVersion | null>(null);
   const [versionLoading, setVersionLoading] = useState(false);
   const [versionError, setVersionError] = useState("");
@@ -712,6 +715,15 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
     setTypingUsers([]);
   };
 
+  const handleCopyJoinCode = async () => {
+    try {
+      await navigator.clipboard.writeText(joinCode);
+      setStatus("Room code copied to clipboard.");
+    } catch {
+      setStatus("Could not copy the room code automatically.");
+    }
+  };
+
   const handleCopyShareLink = async () => {
     try {
       await navigator.clipboard.writeText(window.location.href);
@@ -1140,10 +1152,44 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
         <button onClick={() => setShowHistory((previous) => !previous)}>
           {showHistory ? "Hide History" : "Version History"}
         </button>
-        <button onClick={handleCopyShareLink}>Share Room</button>
+        <button onClick={() => setShowShareRoom(true)}>Share Room</button>
         </div>
       </div>
       </div>
+
+      {showShareRoom && (
+        <div className="cc-modal-backdrop" role="presentation" onClick={() => setShowShareRoom(false)}>
+          <section
+            className="cc-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="share-room-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button
+              className="cc-modal-close"
+              type="button"
+              aria-label="Close Share Room dialog"
+              onClick={() => setShowShareRoom(false)}
+            >
+              ×
+            </button>
+            <div className="cc-eyebrow">Share Room</div>
+            <h2 id="share-room-title">{roomName}</h2>
+            <p>Room Code</p>
+            <div style={{ display: "flex", gap: "0.75rem", alignItems: "center" }}>
+              <code style={{ flex: 1, fontSize: "1.1rem", fontWeight: 700 }}>{joinCode}</code>
+              <button className="cc-button-primary" type="button" onClick={() => void handleCopyJoinCode()}>
+                Copy Code
+              </button>
+            </div>
+            <p style={{ marginTop: "1rem" }}>Share this code with collaborators.</p>
+            <button className="cc-button-ghost" type="button" onClick={() => void handleCopyShareLink()}>
+              Copy Room Link
+            </button>
+          </section>
+        </div>
+      )}
 
       <div
         className="cc-ide-layout"

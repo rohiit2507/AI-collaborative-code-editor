@@ -21,7 +21,12 @@ const { LIMITS, RUNNERS, executeInDocker } = require("./dockerExecutor");
 const { createVersionSnapshot, buildVersionLabel } = require("./versionHistory");
 const { generateAiReply, buildAiContext } = require("./aiService");
 const { analyzeProject, searchProject } = require("./projectAnalyzer");
-const { createYjsToken, YJS_TOKEN_TTL } = require("./yjsAuth");
+const {
+  createYjsToken,
+  generateRoomJoinCode,
+  normalizeRoomJoinCode,
+  YJS_TOKEN_TTL,
+} = require("./yjsAuth");
 const logger = require("./logger");
 const {
   aiModel,
@@ -405,14 +410,28 @@ app.post("/api/rooms", authenticateToken, mutationRateLimit, async (req, res) =>
   }
 
   try {
-    // Get owner from verified JWT
     const ownerId = req.user.userId;
+    let joinCode = "";
+    let attempts = 0;
+
+    do {
+      joinCode = generateRoomJoinCode(`${name}-${attempts || ""}`);
+      attempts += 1;
+      const existing = await pool.query(
+        "SELECT id FROM rooms WHERE join_code = $1",
+        [joinCode]
+      );
+
+      if (existing.rowCount === 0) {
+        break;
+      }
+    } while (attempts < 12);
 
     const result = await pool.query(
-      `INSERT INTO rooms (name, owner_id)
-       VALUES ($1, $2)
-       RETURNING *`,
-      [name, ownerId]
+      `INSERT INTO rooms (name, owner_id, join_code)
+       VALUES ($1, $2, $3)
+       RETURNING id, name, owner_id, join_code, created_at`,
+      [name, ownerId, joinCode]
     );
 
     res.status(201).json({
@@ -429,13 +448,70 @@ app.post("/api/rooms", authenticateToken, mutationRateLimit, async (req, res) =>
   }
 });
 
+app.post("/api/rooms/join", authenticateToken, mutationRateLimit, async (req, res) => {
+  const joinCode = normalizeRoomJoinCode(req.body?.joinCode ?? req.body?.code ?? "");
+
+  if (!joinCode) {
+    return res.status(400).json({
+      success: false,
+      message: "A valid room join code is required",
+    });
+  }
+
+  try {
+    const roomResult = await pool.query(
+      `SELECT id, name, owner_id, join_code
+       FROM rooms
+       WHERE join_code = $1`,
+      [joinCode]
+    );
+
+    if (roomResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Room not found for that join code",
+      });
+    }
+
+    const room = roomResult.rows[0];
+    const userId = Number(req.user.userId);
+
+    if (Number(room.owner_id) === userId) {
+      return res.json({
+        success: true,
+        joined: true,
+        room,
+      });
+    }
+
+    await pool.query(
+      `INSERT INTO room_members (room_id, user_id)
+       VALUES ($1, $2)
+       ON CONFLICT (room_id, user_id) DO NOTHING`,
+      [room.id, userId]
+    );
+
+    res.json({
+      success: true,
+      joined: true,
+      room,
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to join room",
+    });
+  }
+});
+
 // Get rooms owned by authenticated user
 app.get("/api/rooms", authenticateToken, async (req, res) => {
   try {
     const ownerId = req.user.userId;
 
     const result = await pool.query(
-      `SELECT r.id, r.name, r.owner_id, r.created_at,
+      `SELECT r.id, r.name, r.owner_id, r.join_code, r.created_at,
               u.username AS owner_username,
               COUNT(rm.id)::int AS member_count
        FROM rooms r
@@ -457,6 +533,37 @@ app.get("/api/rooms", authenticateToken, async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Failed to retrieve rooms",
+    });
+  }
+});
+
+app.get("/api/rooms/:roomId", authenticateToken, authorizeRoomMember, async (req, res) => {
+  try {
+    const roomResult = await pool.query(
+      `SELECT r.id, r.name, r.owner_id, r.join_code, r.created_at,
+              u.username AS owner_username
+       FROM rooms r
+       JOIN users u ON u.id = r.owner_id
+       WHERE r.id = $1`,
+      [req.params.roomId]
+    );
+
+    if (roomResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Room not found",
+      });
+    }
+
+    res.json({
+      success: true,
+      room: roomResult.rows[0],
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to load room",
     });
   }
 });

@@ -1,7 +1,36 @@
+const crypto = require("node:crypto");
 const jwt = require("jsonwebtoken");
 
 const YJS_TOKEN_AUDIENCE = "yjs";
 const YJS_TOKEN_TTL = "2m";
+const JOIN_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+function normalizeRoomJoinCode(value) {
+  return String(value ?? "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+}
+
+function generateRoomJoinCode(seed = "") {
+  const normalizedSeed = normalizeRoomJoinCode(seed);
+  const randomBytes = crypto.randomBytes(6);
+  let code = "";
+
+  for (const byte of randomBytes) {
+    code += JOIN_CODE_ALPHABET[byte % JOIN_CODE_ALPHABET.length];
+  }
+
+  if (!normalizedSeed) {
+    return code.slice(0, 8);
+  }
+
+  const seedSource = normalizedSeed.slice(0, 4);
+  const suffixLength = Math.max(4, 8 - seedSource.length);
+  const suffix = code.slice(0, suffixLength).padEnd(suffixLength, "X");
+
+  return `${seedSource}${suffix}`.slice(0, 8);
+}
 
 function createYjsToken(user, secret) {
   return jwt.sign(
@@ -63,5 +92,7 @@ module.exports = {
   YJS_TOKEN_AUDIENCE,
   YJS_TOKEN_TTL,
   createYjsToken,
+  generateRoomJoinCode,
+  normalizeRoomJoinCode,
   verifyYjsToken,
 };

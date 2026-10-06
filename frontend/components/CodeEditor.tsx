@@ -411,14 +411,14 @@ export default function CodeEditor({ roomId }: CodeEditorProps) {
 
     void refreshYjsToken().catch((error) => {
       if (error.name !== "AbortError") {
-        setStatus("Could not authenticate Yjs.");
+        setStatus("Session expired. Please sign in again.");
       }
     });
 
     const refreshInterval = window.setInterval(() => {
       void refreshYjsToken().catch((error) => {
         if (error.name !== "AbortError") {
-          setStatus("Could not refresh Yjs authentication.");
+          setStatus("Could not refresh Yjs authentication. Sign in again.");
         }
       });
     }, 60_000);

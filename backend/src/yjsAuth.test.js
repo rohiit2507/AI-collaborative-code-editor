@@ -1,7 +1,12 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const jwt = require("jsonwebtoken");
-const { createYjsToken, verifyYjsToken } = require("./yjsAuth");
+const {
+  createYjsToken,
+  verifyYjsToken,
+  generateRoomJoinCode,
+  normalizeRoomJoinCode,
+} = require("./yjsAuth");
 
 const secret = "yjs-test-secret-that-is-long-enough-123";
 
@@ -51,4 +56,13 @@ test("Yjs room authorization allows owners and members only", async () => {
   assert.equal(await authorizeYjsRoom(pool, 4, 7), true);
   assert.equal(await authorizeYjsRoom(pool, 4, 8), true);
   assert.equal(await authorizeYjsRoom(pool, 4, 9), false);
+});
+
+test("room join codes are normalized and safe to share", () => {
+  const code = generateRoomJoinCode("demo-room");
+
+  assert.match(code, /^[A-Z0-9]{6,10}$/);
+  assert.equal(normalizeRoomJoinCode(" demo-room "), "DEMOROOM");
+  assert.equal(normalizeRoomJoinCode("demo-room"), "DEMOROOM");
+  assert.equal(normalizeRoomJoinCode("Demo Room"), "DEMOROOM");
 });

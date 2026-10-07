@@ -3,6 +3,7 @@
 import { use, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import CodeEditor from "@/components/CodeEditor";
+import CrystalCBackground from "@/components/CrystalCBackground";
 import { API_BASE_URL } from "@/lib/config";
 
 interface User {
@@ -99,32 +100,72 @@ export default function RoomPage({
 
   if (!user) {
     return (
-      <main className="cc-shell">
-        <div className="cc-surface cc-glow" style={{ margin: "0 auto", maxWidth: "680px", padding: "2rem" }}>
-          <div className="cc-eyebrow">Authentication required</div>
-          <h1>Sign in to continue</h1>
-          <p>You need an active account before opening a collaborative room.</p>
-          <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap", marginTop: "1rem" }}>
-            <button className="cc-button-primary" onClick={() => router.push("/?mode=login")}>Sign in</button>
-            <button className="cc-button-ghost" onClick={() => router.push("/")}>Back to home</button>
+      <main className="cc-entry-page cc-access-page">
+        <nav className="cc-nav cc-content-width cc-entry-nav">
+          <button className="cc-brand" type="button" onClick={() => router.push("/")}>
+            <span className="cc-brand-mark">C</span> CodeCollab
+          </button>
+          <span className="cc-entry-nav-note">A thoughtful place to build together</span>
+        </nav>
+        <section className="cc-auth-layout cc-content-width">
+          <div className="cc-auth-card cc-access-card">
+            <div className="cc-eyebrow">Authentication required</div>
+            <h1>Sign in to continue.</h1>
+            <p>You need an active account before opening this collaborative room.</p>
+            <div className="cc-access-actions">
+              <button className="cc-button-primary" onClick={() => router.push("/?mode=login")}>Sign in <span aria-hidden="true">↗</span></button>
+              <button className="cc-button-ghost" onClick={() => router.push("/")}>Back to room codes</button>
+            </div>
           </div>
-        </div>
+          <aside className="cc-auth-story">
+            <div className="cc-eyebrow">Your team is waiting</div>
+            <h2>Good code<br /><em>moves together.</em></h2>
+            <p>Sign in to join the room and pick up the work together.</p>
+            <div className="cc-entry-artwork cc-access-artwork" aria-hidden="true">
+              <span className="cc-entry-orbit cc-entry-orbit-one" />
+              <span className="cc-entry-orbit cc-entry-orbit-two" />
+              <CrystalCBackground />
+              <span className="cc-entry-crystal-fragment cc-entry-fragment-one" />
+              <span className="cc-entry-crystal-fragment cc-entry-fragment-two" />
+            </div>
+          </aside>
+        </section>
       </main>
     );
   }
 
   if (!room) {
     return (
-      <main className="cc-shell">
-        <div className="cc-surface cc-glow" style={{ margin: "0 auto", maxWidth: "680px", padding: "2rem" }}>
-          <div className="cc-eyebrow">Access denied</div>
-          <h1>{error || "This room is not available"}</h1>
-          <p>You are signed in, but this account does not have access to this room.</p>
-          <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap", marginTop: "1rem" }}>
-            <button className="cc-button-primary" onClick={() => router.push("/")}>Use a room code</button>
-            <button className="cc-button-ghost" onClick={() => router.push("/")}>Back to workspace</button>
+      <main className="cc-entry-page cc-access-page">
+        <nav className="cc-nav cc-content-width cc-entry-nav">
+          <button className="cc-brand" type="button" onClick={() => router.push("/")}>
+            <span className="cc-brand-mark">C</span> CodeCollab
+          </button>
+          <span className="cc-entry-nav-note">A thoughtful place to build together</span>
+        </nav>
+        <section className="cc-auth-layout cc-content-width">
+          <div className="cc-auth-card cc-access-card">
+            <div className="cc-eyebrow">Room access</div>
+            <h1>{error || "This room is not available."}</h1>
+            <p>You are signed in, but this account does not have access to this room.</p>
+            <div className="cc-access-actions">
+              <button className="cc-button-primary" onClick={() => router.push("/")}>Use a room code <span aria-hidden="true">↗</span></button>
+              <button className="cc-button-ghost" onClick={() => router.push("/")}>Back to workspace</button>
+            </div>
           </div>
-        </div>
+          <aside className="cc-auth-story">
+            <div className="cc-eyebrow">CodeCollab rooms</div>
+            <h2>Shared focus.<br /><em>Clear access.</em></h2>
+            <p>Join with a room code or ask an owner to add your account.</p>
+            <div className="cc-entry-artwork cc-access-artwork" aria-hidden="true">
+              <span className="cc-entry-orbit cc-entry-orbit-one" />
+              <span className="cc-entry-orbit cc-entry-orbit-two" />
+              <CrystalCBackground />
+              <span className="cc-entry-crystal-fragment cc-entry-fragment-one" />
+              <span className="cc-entry-crystal-fragment cc-entry-fragment-two" />
+            </div>
+          </aside>
+        </section>
       </main>
     );
   }

@@ -76,9 +76,9 @@ function classifyResult({ exitCode, timedOut, compilation, stdout, stderr, trunc
   return "runtime_error";
 }
 
-function runDocker(args, input, timeoutMs, outputBytes, containerName) {
+function runDocker(args, input, timeoutMs, outputBytes, containerName, spawnProcess = spawn) {
   return new Promise((resolve, reject) => {
-    const child = spawn("docker", args, {
+    const child = spawnProcess("docker", args, {
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
     });
@@ -107,7 +107,7 @@ function runDocker(args, input, timeoutMs, outputBytes, containerName) {
     const timer = setTimeout(() => {
       timedOut = true;
       child.kill("SIGKILL");
-      const cleanup = spawn("docker", ["rm", "--force", containerName], {
+      const cleanup = spawnProcess("docker", ["rm", "--force", containerName], {
         stdio: "ignore",
         windowsHide: true,
       });
@@ -139,9 +139,9 @@ function runDocker(args, input, timeoutMs, outputBytes, containerName) {
   });
 }
 
-function ensureImage(image) {
+function ensureImage(image, spawnProcess = spawn) {
   return new Promise((resolve, reject) => {
-    const inspect = spawn("docker", ["image", "inspect", image], {
+    const inspect = spawnProcess("docker", ["image", "inspect", image], {
       stdio: "ignore",
       windowsHide: true,
     });
@@ -153,7 +153,7 @@ function ensureImage(image) {
         return;
       }
 
-      const pull = spawn("docker", ["pull", image], {
+      const pull = spawnProcess("docker", ["pull", image], {
         stdio: ["ignore", "ignore", "pipe"],
         windowsHide: true,
       });
@@ -188,7 +188,7 @@ function ensureImage(image) {
   });
 }
 
-async function executeInDocker({ language, code, limits = LIMITS }) {
+async function executeInDocker({ language, code, stdin = "", limits = LIMITS, spawnProcess = spawn }) {
   const runner = RUNNERS[language];
   if (!runner) {
     const error = new Error(`Unsupported language: ${language}`);
@@ -196,7 +196,7 @@ async function executeInDocker({ language, code, limits = LIMITS }) {
     throw error;
   }
 
-  await ensureImage(runner.image);
+  await ensureImage(runner.image, spawnProcess);
 
   await fs.mkdir(executionRoot, { recursive: true });
   const jobDirectory = await fs.mkdtemp(path.join(executionRoot, "codecollab-exec-"));
@@ -215,6 +215,7 @@ async function executeInDocker({ language, code, limits = LIMITS }) {
     );
     const dockerArgs = [
       "run",
+      "--interactive",
       "--name", containerName,
       "--rm",
       "--network", "none",
@@ -236,10 +237,11 @@ async function executeInDocker({ language, code, limits = LIMITS }) {
 
     const result = await runDocker(
       dockerArgs,
-      "",
+      stdin,
       limits.timeoutMs,
       limits.outputBytes,
-      containerName
+      containerName,
+      spawnProcess
     );
 
     return {
@@ -258,4 +260,5 @@ module.exports = {
   LIMITS,
   RUNNERS,
   executeInDocker,
+  runDocker,
 };

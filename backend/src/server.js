@@ -17,6 +17,7 @@ const {
 } = require("./middleware/roomAuthorization");
 const socketAuth = require("./middleware/socketAuth");
 const ExecutionQueue = require("./executionQueue");
+const { canExecuteInRoom, isExecutionFileInRoom } = require("./executionAuthorization");
 const { LIMITS, RUNNERS, executeInDocker } = require("./dockerExecutor");
 const { createVersionSnapshot, buildVersionLabel } = require("./versionHistory");
 const { generateAiReply, buildAiContext } = require("./aiService");
@@ -41,6 +42,7 @@ const {
 const app = express();
 const PORT = port;
 const MAX_CODE_BYTES = 100 * 1024;
+const MAX_STDIN_BYTES = 16 * 1024;
 const executionQueue = new ExecutionQueue({
   maxPending: 20,
   worker: executeInDocker,
@@ -1466,13 +1468,29 @@ app.post(
 );
 
 app.post("/api/execute", authenticateToken, executionRateLimit, async (req, res) => {
-  const { roomId, fileId, code, language } = req.body;
+  const { roomId, fileId, code, language, stdin = "" } = req.body;
 
-  if (!roomId || typeof code !== "string" || !code.trim() || !language) {
+  if (
+    !Number.isInteger(Number(roomId)) ||
+    Number(roomId) <= 0 ||
+    !Number.isInteger(Number(fileId)) ||
+    Number(fileId) <= 0 ||
+    typeof code !== "string" ||
+    !language ||
+    typeof stdin !== "string"
+  ) {
     return res.status(400).json({
       success: false,
       status: "system_error",
-      message: "roomId, code and language are required",
+      message: "roomId, fileId, code and language are required; stdin must be a string",
+    });
+  }
+
+  if (!code.trim()) {
+    return res.status(400).json({
+      success: false,
+      status: "system_error",
+      message: "No code to execute.",
     });
   }
 
@@ -1492,6 +1510,14 @@ app.post("/api/execute", authenticateToken, executionRateLimit, async (req, res)
     });
   }
 
+  if (Buffer.byteLength(stdin, "utf8") > MAX_STDIN_BYTES) {
+    return res.status(413).json({
+      success: false,
+      status: "resource_limit",
+      message: `Input must be smaller than ${MAX_STDIN_BYTES} bytes`,
+    });
+  }
+
   try {
     const room = await getRoomAccess(roomId, req.user.userId);
 
@@ -1503,10 +1529,7 @@ app.post("/api/execute", authenticateToken, executionRateLimit, async (req, res)
       });
     }
 
-    if (
-      String(room.owner_id) !== String(req.user.userId) &&
-      !room.is_member
-    ) {
+    if (!canExecuteInRoom(room, req.user.userId)) {
       return res.status(403).json({
         success: false,
         status: "system_error",
@@ -1514,21 +1537,19 @@ app.post("/api/execute", authenticateToken, executionRateLimit, async (req, res)
       });
     }
 
-    if (fileId) {
-      const fileResult = await pool.query(
-        `SELECT id
-         FROM files
-         WHERE id = $1 AND room_id = $2`,
-        [fileId, roomId]
-      );
+    const fileResult = await pool.query(
+      `SELECT id, room_id
+       FROM files
+       WHERE id = $1`,
+      [fileId]
+    );
 
-      if (fileResult.rows.length === 0) {
-        return res.status(404).json({
-          success: false,
-          status: "system_error",
-          message: "File not found in this room",
-        });
-      }
+    if (!isExecutionFileInRoom(fileResult.rows[0], roomId)) {
+      return res.status(404).json({
+        success: false,
+        status: "system_error",
+        message: "File not found in this room",
+      });
     }
 
     const jobId = require("node:crypto").randomUUID();
@@ -1536,6 +1557,7 @@ app.post("/api/execute", authenticateToken, executionRateLimit, async (req, res)
       jobId,
       language,
       code,
+      stdin,
       limits: LIMITS,
     });
 

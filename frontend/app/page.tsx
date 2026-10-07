@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState, useSyncExternalStore } from "react";
+import CrystalCBackground from "@/components/CrystalCBackground";
 import { API_BASE_URL } from "@/lib/config";
 
 interface User {
@@ -16,6 +17,14 @@ interface Room {
   name: string;
   owner_id: number;
   join_code?: string;
+  member_count?: number;
+}
+
+interface RoomMember {
+  id: number;
+  user_id: number;
+  username: string;
+  email: string;
 }
 
 const features = [
@@ -45,6 +54,14 @@ export default function Home() {
   const [user, setUser] = useState<User | null>(null);
   const [rooms, setRooms] = useState<Room[]>([]);
   const [status, setStatus] = useState("");
+  const [copiedRoomId, setCopiedRoomId] = useState<number | null>(null);
+  const [membersRoom, setMembersRoom] = useState<Room | null>(null);
+  const [roomMembers, setRoomMembers] = useState<RoomMember[]>([]);
+  const [membersLoading, setMembersLoading] = useState(false);
+  const [memberUserId, setMemberUserId] = useState("");
+  const [editingRoom, setEditingRoom] = useState<Room | null>(null);
+  const [deletingRoom, setDeletingRoom] = useState<Room | null>(null);
+  const [deleteError, setDeleteError] = useState("");
   const activeMode = mode === "landing" && urlRequestsLogin ? "login" : mode;
 
   const pendingJoinKey = "cc_pending_join_code";
@@ -264,9 +281,161 @@ export default function Home() {
     router.push("/");
   };
 
+  const copyJoinCode = async (room: Room) => {
+    if (!room.join_code) {
+      setStatus("Room code is unavailable.");
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(room.join_code);
+      setCopiedRoomId(room.id);
+      window.setTimeout(() => {
+        setCopiedRoomId((currentRoomId) => currentRoomId === room.id ? null : currentRoomId);
+      }, 1600);
+    } catch {
+      setStatus("Could not copy the room code. Select and copy it manually.");
+    }
+  };
+
+  const copyRoomLink = async (room: Room) => {
+    try {
+      await navigator.clipboard.writeText(`${window.location.origin}/room/${room.id}`);
+      setStatus("Room link copied.");
+    } catch {
+      setStatus("Could not copy the room link.");
+    }
+  };
+
+  const openMembers = async (room: Room) => {
+    setMembersRoom(room);
+    setMembersLoading(true);
+    setRoomMembers([]);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/rooms/${room.id}/members`, {
+        credentials: "include",
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setStatus(data.message || "Could not load room members.");
+        return;
+      }
+      setRoomMembers(Array.isArray(data.members) ? data.members : []);
+    } catch {
+      setStatus("Could not connect to the backend.");
+    } finally {
+      setMembersLoading(false);
+    }
+  };
+
+  const addMember = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!membersRoom || !/^\d+$/.test(memberUserId.trim())) {
+      setStatus("Enter a valid user ID.");
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/rooms/${membersRoom.id}/members`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: Number(memberUserId) }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setStatus(data.message || "Could not add room member.");
+        return;
+      }
+      setMemberUserId("");
+      setStatus("Member added.");
+      await openMembers(membersRoom);
+      await loadRooms();
+    } catch {
+      setStatus("Could not connect to the backend.");
+    }
+  };
+
+  const removeMember = async (member: RoomMember) => {
+    if (!membersRoom) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/rooms/${membersRoom.id}/members/${member.user_id}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setStatus(data.message || "Could not remove room member.");
+        return;
+      }
+      setStatus("Member removed.");
+      await openMembers(membersRoom);
+      await loadRooms();
+    } catch {
+      setStatus("Could not connect to the backend.");
+    }
+  };
+
+  const renameRoom = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!editingRoom || !roomName.trim()) {
+      setStatus("Room name is required.");
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/rooms/${editingRoom.id}`, {
+        method: "PUT",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: roomName.trim() }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setStatus(data.message || "Could not rename room.");
+        return;
+      }
+      setEditingRoom(null);
+      setRoomName("");
+      setStatus("Room renamed.");
+      await loadRooms();
+    } catch {
+      setStatus("Could not connect to the backend.");
+    }
+  };
+
+  const deleteRoom = async () => {
+    if (!deletingRoom) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/rooms/${deletingRoom.id}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        const message = data.message || "Could not delete room.";
+        setDeleteError(message);
+        setStatus(message);
+        return;
+      }
+      setRooms((currentRooms) => currentRooms.filter((room) => room.id !== deletingRoom.id));
+      setStatus(`Deleted ${deletingRoom.name}.`);
+      setDeletingRoom(null);
+    } catch {
+      setDeleteError("Could not connect to the backend.");
+      setStatus("Could not connect to the backend.");
+    }
+  };
+
   const renderLanding = () => (
-    <main className="cc-landing">
-      <nav className="cc-nav cc-content-width">
+    <main className="cc-landing cc-entry-page">
+      <nav className="cc-nav cc-content-width cc-entry-nav">
         <button className="cc-brand" type="button">
           <span className="cc-brand-mark">C</span> CodeCollab
         </button>
@@ -276,28 +445,39 @@ export default function Home() {
         </div>
       </nav>
 
-      <section className="cc-hero cc-content-width">
-        <div className="cc-eyebrow">Join a collaborative room</div>
-        <h1>
-          Have a room code?
-          <br />
-          <span>Enter it below.</span>
-        </h1>
-        <p className="cc-hero-copy">
-          Use your room code to continue, then sign in or create an account to join securely.
-        </p>
+      <section className="cc-entry-layout cc-content-width">
+        <div className="cc-entry-copy">
+          <div className="cc-eyebrow">CodeCollab / shared workspace</div>
+          <h1>Have a room code?<br /><em>Enter it below.</em></h1>
+          <p className="cc-hero-copy">
+            Bring your collaborators together in a focused room for shared code, ideas, and momentum.
+          </p>
 
-        <form onSubmit={handleJoinRoom} className="cc-form" style={{ maxWidth: "520px", marginTop: "1.5rem", gap: "0.75rem" }}>
-          <input
-            value={joinCode}
-            onChange={(event) => setJoinCode(event.target.value)}
-            placeholder="Room code"
-            maxLength={12}
-          />
-          <button className="cc-button-primary" type="submit">Join room</button>
-        </form>
+          <form onSubmit={handleJoinRoom} className="cc-entry-code-form">
+            <label className="cc-entry-code-field">
+              <span aria-hidden="true">⌘</span>
+              <input
+                value={joinCode}
+                onChange={(event) => setJoinCode(event.target.value)}
+                placeholder="Room code"
+                aria-label="Room code"
+                maxLength={12}
+              />
+            </label>
+            <button className="cc-button-primary" type="submit">Join room <span aria-hidden="true">↗</span></button>
+          </form>
 
-        <p className="cc-status">{status}</p>
+          <p className="cc-status" role="status" aria-live="polite">{status}</p>
+          <div className="cc-entry-caption"><span />Private rooms. Shared momentum.</div>
+        </div>
+
+        <div className="cc-entry-artwork" aria-hidden="true">
+          <span className="cc-entry-orbit cc-entry-orbit-one" />
+          <span className="cc-entry-orbit cc-entry-orbit-two" />
+          <CrystalCBackground />
+          <span className="cc-entry-crystal-fragment cc-entry-fragment-one" />
+          <span className="cc-entry-crystal-fragment cc-entry-fragment-two" />
+        </div>
       </section>
 
       <section className="cc-feature-band cc-content-width">
@@ -316,58 +496,79 @@ export default function Home() {
   );
 
   const renderAuth = () => (
-    <main className="cc-auth-page">
-      <button
-        className="cc-brand cc-auth-brand"
-        type="button"
-        onClick={() => {
-          setMode("landing");
-          router.replace("/");
-        }}
-      >
-        <span className="cc-brand-mark">C</span> CodeCollab
-      </button>
-
-      <section className="cc-auth-card cc-glow">
-        <div className="cc-eyebrow">{activeMode === "login" ? "Welcome back" : "Create your workspace"}</div>
-        <h1>{activeMode === "login" ? "Return to the room." : "Start building together."}</h1>
-        <p>
-          {activeMode === "login"
-            ? joinCode
-              ? "Room found. Sign in or create an account to join."
-              : "Sign in and pick up where your team left off."
-            : "Create an account for collaborative rooms and AI-assisted development."}
-        </p>
-
-        <form onSubmit={handleAuth} className="cc-form">
-          {activeMode === "register" && (
-            <input value={username} onChange={(event) => setUsername(event.target.value)} placeholder="Username" required />
-          )}
-          <input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="Email address" type="email" required />
-          <input value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Password" type="password" required />
-          <button className="cc-button-primary" type="submit">
-            {activeMode === "login" ? "Sign in" : "Create account"}
-          </button>
-        </form>
-
-        <form onSubmit={handleJoinRoom} className="cc-form" style={{ marginTop: "1rem", gap: "0.75rem" }}>
-          <input value={joinCode} onChange={(event) => setJoinCode(event.target.value)} placeholder="Room join code" maxLength={12} />
-          <button className="cc-button-ghost" type="submit">Join room</button>
-        </form>
-
-        <p className="cc-status">{status}</p>
-        <button className="cc-text-button" type="button" onClick={() => setMode(activeMode === "login" ? "register" : "login")}>
-          {activeMode === "login" ? "Need an account? Register" : "Already registered? Sign in"}
+    <main className="cc-auth-page cc-entry-page">
+      <nav className="cc-nav cc-content-width cc-entry-nav">
+        <button
+          className="cc-brand"
+          type="button"
+          onClick={() => {
+            setMode("landing");
+            router.replace("/");
+          }}
+        >
+          <span className="cc-brand-mark">C</span> CodeCollab
         </button>
+        <span className="cc-entry-nav-note">A thoughtful place to build together</span>
+      </nav>
+
+      <section className="cc-auth-layout cc-content-width">
+        <section className="cc-auth-card">
+          <div className="cc-eyebrow">{activeMode === "login" ? "Welcome back" : "Your workspace begins here"}</div>
+          <h1>{activeMode === "login" ? "Return to the room." : "Make something together."}</h1>
+          <p>
+            {activeMode === "login"
+              ? joinCode
+                ? "Room found. Sign in or create an account to join."
+                : "Pick up where your team left off."
+              : "Create an account for shared rooms and thoughtful, AI-assisted development."}
+          </p>
+
+          <form onSubmit={handleAuth} className="cc-form">
+            {activeMode === "register" && (
+              <input value={username} onChange={(event) => setUsername(event.target.value)} placeholder="Username" autoComplete="username" required />
+            )}
+            <input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="Email address" type="email" autoComplete="email" required />
+            <input value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Password" type="password" autoComplete={activeMode === "login" ? "current-password" : "new-password"} required />
+            <button className="cc-button-primary" type="submit">
+              {activeMode === "login" ? "Sign in" : "Create account"} <span aria-hidden="true">↗</span>
+            </button>
+          </form>
+
+          {joinCode ? <p className="cc-entry-pending-code">Room code saved <code>{joinCode}</code></p> : null}
+
+          <form onSubmit={handleJoinRoom} className="cc-entry-inline-join">
+            <input value={joinCode} onChange={(event) => setJoinCode(event.target.value)} placeholder="Room join code" aria-label="Room join code" maxLength={12} />
+            <button className="cc-button-ghost" type="submit">Join room</button>
+          </form>
+
+          <p className="cc-status" role="status" aria-live="polite">{status}</p>
+          <button className="cc-text-button" type="button" onClick={() => setMode(activeMode === "login" ? "register" : "login")}>
+            {activeMode === "login" ? "New to CodeCollab? Create an account" : "Already have an account? Sign in"}
+          </button>
+        </section>
+
+        <aside className="cc-auth-story">
+          <div className="cc-eyebrow">A shared creative space</div>
+          <h2>Good code<br /><em>moves together.</em></h2>
+          <p>Live collaboration, focused tools, and room for the whole team to think.</p>
+          <div className="cc-entry-artwork cc-auth-artwork" aria-hidden="true">
+            <span className="cc-entry-orbit cc-entry-orbit-one" />
+            <span className="cc-entry-orbit cc-entry-orbit-two" />
+            <CrystalCBackground />
+            <span className="cc-entry-crystal-fragment cc-entry-fragment-one" />
+            <span className="cc-entry-crystal-fragment cc-entry-fragment-two" />
+          </div>
+        </aside>
       </section>
     </main>
   );
 
   const renderDashboard = () => (
-    <main className="cc-dashboard">
+    <main className="cc-dashboard cc-warm-dashboard">
       <aside className="cc-sidebar">
         <button className="cc-brand" type="button">
-          <span className="cc-brand-mark">C</span> CodeCollab
+          <span className="cc-brand-mark" aria-hidden="true">C<i /></span>
+          <span className="cc-brand-wordmark">CodeCollab</span>
         </button>
 
         <div className="cc-sidebar-section">
@@ -393,27 +594,29 @@ export default function Home() {
       </aside>
 
       <section className="cc-dashboard-main">
-        <header className="cc-dashboard-header">
+        <section className="cc-dashboard-hero">
           <div>
             <div className="cc-eyebrow">Workspace / home</div>
-            <h1>Good to see you, {user?.username}.</h1>
+            <h1>Good to see you,<br /><em>{user?.username}.</em></h1>
             <p>Your rooms, ready when you are.</p>
           </div>
+          <CrystalCBackground />
+        </section>
 
-          <div style={{ display: "flex", gap: "0.75rem", alignItems: "center" }}>
-            <form onSubmit={handleJoinRoom} style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+        <header className="cc-dashboard-header">
+          <div className="cc-dashboard-actions">
+            <form className="cc-room-action-form cc-join-action" onSubmit={handleJoinRoom}>
               <input
                 value={joinCode}
                 onChange={(event) => setJoinCode(event.target.value)}
                 placeholder="Join room code"
                 maxLength={12}
-                style={{ maxWidth: "180px" }}
               />
               <button className="cc-button-primary" type="submit">Join Room</button>
             </form>
-            <form onSubmit={handleCreateRoom}>
-              <input value={roomName} onChange={(event) => setRoomName(event.target.value)} placeholder="Room name" style={{ maxWidth: "180px" }} />
-              <button className="cc-button-primary" type="submit">＋ Create room</button>
+            <form className="cc-room-action-form cc-create-action" onSubmit={handleCreateRoom}>
+              <input value={roomName} onChange={(event) => setRoomName(event.target.value)} placeholder="Room name" />
+              <button className="cc-button-primary" type="submit"><span aria-hidden="true">＋</span> Create room</button>
             </form>
           </div>
         </header>
@@ -444,16 +647,36 @@ export default function Home() {
             <div className="cc-room-grid">
               {rooms.map((room, index) => (
                 <div className="cc-room-card" key={room.id}>
-                  <Link href={`/room/${room.id}`}>
-                    <div className="cc-room-card-top">
-                      <span className="cc-room-index">0{index + 1}</span>
-                      <span className="cc-room-arrow">↗</span>
-                    </div>
-                    <h3>{room.name}</h3>
-                  </Link>
+                  <div className="cc-room-card-top">
+                    <span className="cc-room-index">{String(index + 1).padStart(2, "0")}</span>
+                    <Link aria-label={`Open ${room.name}`} className="cc-room-open-icon" href={`/room/${room.id}`}>↗</Link>
+                  </div>
+                  <h3>{room.name}</h3>
+                  <div className="cc-room-meta">
+                    <span className="cc-member-chip"><span aria-hidden="true">♧</span>{room.member_count ?? 0} {room.member_count === 1 ? "member" : "members"}</span>
+                    {Number(room.owner_id) === user?.id && room.join_code ? (
+                      <div className="cc-room-code">
+                        <span className="cc-room-code-label">Room Code</span>
+                        <code>{room.join_code}</code>
+                        <button type="button" aria-label={`Copy ${room.name} room code`} onClick={() => void copyJoinCode(room)}>
+                          {copiedRoomId === room.id ? "Copied" : "Copy"}
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
                   <div className="cc-room-actions">
-                    <button type="button" onClick={() => navigator.clipboard.writeText(`${window.location.origin}/room/${room.id}`)}>Share</button>
-                    <button type="button" onClick={() => {/* no-op */}}>Members</button>
+                    <Link className="cc-room-action-open" href={`/room/${room.id}`}>↗ <span>Open</span></Link>
+                    <button type="button" onClick={() => void copyRoomLink(room)}>⌯ <span>Share</span></button>
+                    <button type="button" onClick={() => void openMembers(room)}>♧ <span>Members</span></button>
+                    {Number(room.owner_id) === user?.id ? (
+                      <details className="cc-room-more">
+                        <summary aria-label={`More actions for ${room.name}`}>⋮</summary>
+                        <div className="cc-room-more-menu">
+                          <button type="button" onClick={() => { setRoomName(room.name); setEditingRoom(room); }}>Rename</button>
+                          <button className="cc-danger-button" type="button" onClick={() => { setDeleteError(""); setDeletingRoom(room); }}>Delete</button>
+                        </div>
+                      </details>
+                    ) : null}
                   </div>
                 </div>
               ))}
@@ -461,6 +684,65 @@ export default function Home() {
           )}
         </section>
       </section>
+
+      {editingRoom ? (
+        <div className="cc-modal-backdrop" role="presentation" onClick={() => setEditingRoom(null)}>
+          <section className="cc-modal" role="dialog" aria-modal="true" aria-labelledby="rename-room-title" onClick={(event) => event.stopPropagation()}>
+            <button className="cc-modal-close" type="button" aria-label="Close rename dialog" onClick={() => setEditingRoom(null)}>×</button>
+            <div className="cc-eyebrow">Room settings</div>
+            <h2 id="rename-room-title">Rename Room</h2>
+            <form className="cc-form" onSubmit={renameRoom}>
+              <input value={roomName} onChange={(event) => setRoomName(event.target.value)} aria-label="Room name" required />
+              <div className="cc-modal-actions">
+                <button className="cc-button-ghost" type="button" onClick={() => setEditingRoom(null)}>Cancel</button>
+                <button className="cc-button-primary" type="submit">Save name</button>
+              </div>
+            </form>
+          </section>
+        </div>
+      ) : null}
+
+      {membersRoom ? (
+        <div className="cc-modal-backdrop" role="presentation" onClick={() => setMembersRoom(null)}>
+          <section className="cc-modal" role="dialog" aria-modal="true" aria-labelledby="room-members-title" onClick={(event) => event.stopPropagation()}>
+            <button className="cc-modal-close" type="button" aria-label="Close members dialog" onClick={() => setMembersRoom(null)}>×</button>
+            <div className="cc-eyebrow">Room access</div>
+            <h2 id="room-members-title">{membersRoom.name}</h2>
+            <p>People in this room</p>
+            {membersLoading ? <p>Loading members...</p> : (
+              <div className="cc-member-list">
+                {roomMembers.length === 0 ? <p>No members have joined yet.</p> : roomMembers.map((member) => (
+                  <div className="cc-member-row" key={member.id}>
+                    <span><strong>{member.username}</strong><small>{member.email}</small></span>
+                    <button className="cc-danger-button" type="button" onClick={() => void removeMember(member)}>Remove</button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <form className="cc-form" onSubmit={addMember}>
+              <input value={memberUserId} onChange={(event) => setMemberUserId(event.target.value)} placeholder="Collaborator user ID" inputMode="numeric" required />
+              <button className="cc-button-primary" type="submit">Add member</button>
+            </form>
+          </section>
+        </div>
+      ) : null}
+
+      {deletingRoom ? (
+        <div className="cc-modal-backdrop" role="presentation" onClick={() => { setDeletingRoom(null); setDeleteError(""); }}>
+          <section className="cc-modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-room-title" onClick={(event) => event.stopPropagation()}>
+            <button className="cc-modal-close" type="button" aria-label="Close delete confirmation" onClick={() => { setDeletingRoom(null); setDeleteError(""); }}>×</button>
+            <div className="cc-eyebrow">Permanent action</div>
+            <h2 id="delete-room-title">Delete Room?</h2>
+            <p>Are you sure you want to delete “{deletingRoom.name}”?</p>
+            <p>This permanently deletes the room and its associated files and history.</p>
+            {deleteError ? <p className="cc-history-error" role="alert">{deleteError}</p> : null}
+            <div className="cc-modal-actions">
+              <button className="cc-button-ghost" type="button" onClick={() => { setDeletingRoom(null); setDeleteError(""); }}>Cancel</button>
+              <button className="cc-danger-button" type="button" onClick={() => void deleteRoom()}>Delete Room</button>
+            </div>
+          </section>
+        </div>
+      ) : null}
     </main>
   );
 

@@ -116,6 +116,9 @@ export default function CodeEditor({ roomId, roomName, joinCode }: CodeEditorPro
   const [language, setLanguage] = useState("python");
   const [output, setOutput] = useState("");
   const [executionResult, setExecutionResult] = useState<ExecutionResult | null>(null);
+  const [stdinInput, setStdinInput] = useState("");
+  const [boundEditorFileId, setBoundEditorFileId] = useState<number | null>(null);
+  const [syncedEditorFileId, setSyncedEditorFileId] = useState<number | null>(null);
   const [status, setStatus] = useState("Loading files...");
   const [files, setFiles] = useState<RoomFile[]>([]);
   const [activeFileId, setActiveFileId] = useState<number | null>(null);
@@ -189,9 +192,10 @@ export default function CodeEditor({ roomId, roomName, joinCode }: CodeEditorPro
         );
         bindingsRef.current.set(nextProvider, binding);
         bindingRef.current = binding;
+        setBoundEditorFileId(activeFileId);
       });
     },
-    [text]
+    [activeFileId, text]
   );
 
   const syncLocalCursorState = useCallback(() => {
@@ -540,6 +544,13 @@ export default function CodeEditor({ roomId, roomName, joinCode }: CodeEditorPro
     };
 
     const handleSync = (isSynced: boolean) => {
+      setSyncedEditorFileId((currentFileId) =>
+        isSynced
+          ? activeFileId
+          : currentFileId === activeFileId
+            ? null
+            : currentFileId
+      );
       if (!isSynced) {
         return;
       }
@@ -590,6 +601,9 @@ export default function CodeEditor({ roomId, roomName, joinCode }: CodeEditorPro
         if (bindingRef.current === binding) {
           bindingRef.current = null;
         }
+        setBoundEditorFileId((currentFileId) =>
+          currentFileId === activeFileId ? null : currentFileId
+        );
       }
       nextProvider.awareness.setLocalState(null);
       nextProvider.off("status", handleStatus);
@@ -867,6 +881,38 @@ export default function CodeEditor({ roomId, roomName, joinCode }: CodeEditorPro
   };
 
   const handleRun = async () => {
+    if (!activeFileId || boundEditorFileId !== activeFileId || syncedEditorFileId !== activeFileId) {
+      setExecutionResult({
+        success: false,
+        status: "system_error",
+        message: "The active editor is still initializing. Try again shortly.",
+      });
+      setOutput("");
+      return;
+    }
+
+    const model = editorRef.current?.getModel();
+    if (!model) {
+      setExecutionResult({
+        success: false,
+        status: "system_error",
+        message: "The active editor is not ready.",
+      });
+      setOutput("");
+      return;
+    }
+
+    const code = model.getValue();
+    if (!code.trim()) {
+      setExecutionResult({
+        success: false,
+        status: "system_error",
+        message: "No code to execute.",
+      });
+      setOutput("");
+      return;
+    }
+
     setOutput("Queueing execution...");
     setExecutionResult(null);
 
@@ -880,8 +926,9 @@ export default function CodeEditor({ roomId, roomName, joinCode }: CodeEditorPro
         body: JSON.stringify({
           roomId: Number(roomId),
           fileId: activeFileId,
-          code: text.toString(),
+          code,
           language,
+          stdin: stdinInput,
         }),
       });
 
@@ -1363,7 +1410,7 @@ export default function CodeEditor({ roomId, roomName, joinCode }: CodeEditorPro
               <option value="cpp">C++</option>
             </select>
 
-            <button onClick={handleRun}>Run</button>
+            <button onClick={handleRun} disabled={!activeFileId || boundEditorFileId !== activeFileId || syncedEditorFileId !== activeFileId}>Run Code</button>
             <button onClick={() => void handleSave()}>Save</button>
             <button onClick={() => void handleAskAi("Explain this code", { previewOnly: true })}>Explain</button>
             <button onClick={() => void handleAskAi("Fix this code", { previewOnly: true })}>Fix</button>
@@ -1373,6 +1420,26 @@ export default function CodeEditor({ roomId, roomName, joinCode }: CodeEditorPro
             <button onClick={() => void handleAskAi(`Add docstrings and comments for this ${language} code`, { previewOnly: true })}>Doc</button>
             <button onClick={() => void handleAskProject()}>Ask project</button>
           </div>
+
+          <label htmlFor="execution-stdin" style={{ display: "grid", gap: "0.4rem", marginBottom: "0.75rem" }}>
+            <strong>Input / STDIN</strong>
+            <textarea
+              id="execution-stdin"
+              value={stdinInput}
+              onChange={(event) => setStdinInput(event.target.value)}
+              rows={4}
+              placeholder="Optional input passed to the program"
+              style={{
+                width: "100%",
+                resize: "vertical",
+                padding: "0.65rem",
+                border: "1px solid #374151",
+                borderRadius: "6px",
+                background: "#0f172a",
+                color: "#f9fafb",
+              }}
+            />
+          </label>
 
           {showHistory && activeFileId ? (
             <section className="cc-history-panel" aria-label="Version history">
@@ -1626,20 +1693,26 @@ export default function CodeEditor({ roomId, roomName, joinCode }: CodeEditorPro
             {executionResult ? (
               <div style={{ marginTop: "10px" }}>
                 <div>
-                  Status: <strong>{executionResult.status}</strong>
+                  Status: <strong style={{ color: executionResult.success ? "#86efac" : "#fca5a5" }}>{executionResult.status}</strong>
                   {executionResult.durationMs !== undefined
                     ? ` (${executionResult.durationMs} ms)`
                     : ""}
                 </div>
-                <pre>{executionResult.stdout || output || "No output"}</pre>
-                {executionResult.stderr ? (
+                <strong>Output</strong>
+                <pre>{executionResult.stdout || (executionResult.success ? "No output" : "No stdout")}</pre>
+                {!executionResult.success ? (
                   <>
-                    <strong>ERROR</strong>
-                    <pre style={{ color: "#fca5a5" }}>{executionResult.stderr}</pre>
+                    <strong>Error</strong>
+                    <pre style={{ color: "#fca5a5" }}>
+                      {executionResult.stderr || executionResult.message || (executionResult.status === "timeout" ? "Execution timed out." : `Execution failed (${executionResult.status}).`)}
+                    </pre>
                   </>
                 ) : null}
-                {executionResult.message && !executionResult.stderr ? (
-                  <pre style={{ color: "#fca5a5" }}>{executionResult.message}</pre>
+                {executionResult.success && executionResult.stderr ? (
+                  <>
+                    <strong>Standard error</strong>
+                    <pre style={{ color: "#fca5a5" }}>{executionResult.stderr}</pre>
+                  </>
                 ) : null}
               </div>
             ) : (

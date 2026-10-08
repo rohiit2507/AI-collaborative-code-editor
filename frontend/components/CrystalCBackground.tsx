@@ -16,6 +16,8 @@ export default function CrystalCBackground() {
 
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
     const mobileViewport = window.matchMedia("(max-width: 760px)");
+    const shouldReduceMotion = () =>
+      reducedMotion.matches || document.documentElement.dataset.ccReducedMotion === "true";
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(36, 1, 0.1, 100);
     camera.position.set(0, 0, 10);
@@ -25,6 +27,8 @@ export default function CrystalCBackground() {
     let resizeObserver: ResizeObserver | null = null;
     let pointerX = 0;
     let pointerY = 0;
+    let targetPointerX = 0;
+    let targetPointerY = 0;
     const geometries: THREE.BufferGeometry[] = [];
     const materials: THREE.Material[] = [];
     const textures: THREE.Texture[] = [];
@@ -296,16 +300,28 @@ export default function CrystalCBackground() {
       resize();
 
       const animate = (time: number) => {
-        if (!renderer || document.hidden || reducedMotion.matches) {
+        if (!renderer || document.hidden || shouldReduceMotion()) {
           animationFrame = 0;
           return;
         }
         const seconds = time * 0.001;
-        sculpture.rotation.y = Math.sin(seconds * 0.2) * 0.1 + pointerX * 0.045;
-        sculpture.rotation.x = Math.sin(seconds * 0.16) * 0.035 + pointerY * 0.035;
-        sculpture.rotation.z = Math.sin(seconds * 0.12) * 0.018;
-        orbitGroup.rotation.z = seconds * 0.018;
-        particles.rotation.z = -seconds * 0.008;
+        pointerX += (targetPointerX - pointerX) * 0.075;
+        pointerY += (targetPointerY - pointerY) * 0.075;
+        sculpture.rotation.y = Math.sin(seconds * 0.2) * 0.1 + pointerX * 0.14;
+        sculpture.rotation.x = Math.sin(seconds * 0.16) * 0.035 + pointerY * 0.12;
+        sculpture.rotation.z = Math.sin(seconds * 0.12) * 0.018 + pointerX * 0.025;
+        camera.position.x += (pointerX * 0.42 - camera.position.x) * 0.06;
+        camera.position.y += (-pointerY * 0.3 - camera.position.y) * 0.06;
+        camera.lookAt(0, 0, 0);
+        orbitGroup.rotation.z = seconds * 0.018 + pointerX * 0.08;
+        orbitGroup.rotation.x = pointerY * 0.05;
+        particles.rotation.z = -seconds * 0.008 + pointerX * 0.06;
+        warmLight.position.x += (2.4 + pointerX * 1.8 - warmLight.position.x) * 0.06;
+        warmLight.position.y += (1.6 - pointerY * 1.4 - warmLight.position.y) * 0.06;
+        goldLight.position.x += (-3.5 + pointerX * 1.2 - goldLight.position.x) * 0.06;
+        goldLight.position.y += (-1.8 - pointerY * 1.1 - goldLight.position.y) * 0.06;
+        floatingShards.rotation.x = pointerY * 0.08;
+        floatingShards.rotation.y = pointerX * 0.1;
         renderScene();
         animationFrame = window.requestAnimationFrame(animate);
       };
@@ -313,7 +329,7 @@ export default function CrystalCBackground() {
       const startAnimation = () => {
         stopAnimation();
         renderScene();
-        if (!document.hidden && !reducedMotion.matches) {
+        if (!document.hidden && !shouldReduceMotion()) {
           animationFrame = window.requestAnimationFrame(animate);
         }
       };
@@ -328,18 +344,26 @@ export default function CrystalCBackground() {
       const handleMotionChange = () => startAnimation();
       const handlePointerMove = (event: PointerEvent) => {
         const bounds = host.getBoundingClientRect();
-        pointerX = ((event.clientX - bounds.left) / Math.max(1, bounds.width) - 0.5) * 2;
-        pointerY = ((event.clientY - bounds.top) / Math.max(1, bounds.height) - 0.5) * 2;
+        const isInside = event.clientX >= bounds.left
+          && event.clientX <= bounds.right
+          && event.clientY >= bounds.top
+          && event.clientY <= bounds.bottom;
+        if (!isInside) {
+          return;
+        }
+        targetPointerX = Math.max(-1, Math.min(1, ((event.clientX - bounds.left) / Math.max(1, bounds.width) - 0.5) * 2));
+        targetPointerY = Math.max(-1, Math.min(1, ((event.clientY - bounds.top) / Math.max(1, bounds.height) - 0.5) * 2));
       };
       const handlePointerLeave = () => {
-        pointerX = 0;
-        pointerY = 0;
+        targetPointerX = 0;
+        targetPointerY = 0;
       };
 
       document.addEventListener("visibilitychange", handleVisibility);
       reducedMotion.addEventListener("change", handleMotionChange);
+      window.addEventListener("cc-motion-preference-change", handleMotionChange);
       mobileViewport.addEventListener("change", resize);
-      host.addEventListener("pointermove", handlePointerMove);
+      window.addEventListener("pointermove", handlePointerMove, { passive: true });
       host.addEventListener("pointerleave", handlePointerLeave);
       host.dataset.ready = "true";
       startAnimation();
@@ -349,8 +373,9 @@ export default function CrystalCBackground() {
         resizeObserver?.disconnect();
         document.removeEventListener("visibilitychange", handleVisibility);
         reducedMotion.removeEventListener("change", handleMotionChange);
+        window.removeEventListener("cc-motion-preference-change", handleMotionChange);
         mobileViewport.removeEventListener("change", resize);
-        host.removeEventListener("pointermove", handlePointerMove);
+        window.removeEventListener("pointermove", handlePointerMove);
         host.removeEventListener("pointerleave", handlePointerLeave);
         delete host.dataset.ready;
         geometries.forEach((geometry) => geometry.dispose());

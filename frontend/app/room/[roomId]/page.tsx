@@ -1,6 +1,7 @@
 "use client";
 
 import { use, useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import CodeEditor from "@/components/CodeEditor";
 import CrystalCBackground from "@/components/CrystalCBackground";
@@ -171,14 +172,15 @@ export default function RoomPage({
   }
 
   return (
-    <main className="cc-shell">
-      <header style={{ margin: "0 auto", maxWidth: "1400px", padding: "0 0 18px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: "1rem" }}>
-        <div>
-          <div className="cc-eyebrow">Collaborative session</div>
+    <main className="cc-shell cc-room-page">
+      <header className="cc-room-page-header">
+        <Link className="cc-room-home-link" href="/">← <span>Workspace</span></Link>
+        <div className="cc-room-page-title">
+          <div className="cc-eyebrow">Collaborative session / room {roomId}</div>
           <h1>{room.name}</h1>
         </div>
 
-        <div className="cc-user-chip" style={{ marginLeft: "auto" }}>
+        <div className="cc-user-chip cc-room-user-chip">
           <span className="cc-avatar">{user.username.slice(0, 1).toUpperCase()}</span>
           <span>
             <strong>{user.username}</strong>

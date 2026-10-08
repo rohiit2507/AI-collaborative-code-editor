@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import Editor, { OnMount } from "@monaco-editor/react";
+import Link from "next/link";
+import Editor, { BeforeMount, OnMount } from "@monaco-editor/react";
 import type { editor as MonacoEditor } from "monaco-editor";
 import type { WebsocketProvider } from "y-websocket";
 import { createYjsDocument } from "@/lib/yjs";
@@ -113,6 +114,7 @@ function getPresenceColor(userId: number) {
 }
 
 export default function CodeEditor({ roomId, roomName, joinCode }: CodeEditorProps) {
+  const [mobilePanelOpen, setMobilePanelOpen] = useState<"files" | "chat" | null>(null);
   const [language, setLanguage] = useState("python");
   const [output, setOutput] = useState("");
   const [executionResult, setExecutionResult] = useState<ExecutionResult | null>(null);
@@ -639,6 +641,13 @@ export default function CodeEditor({ roomId, roomName, joinCode }: CodeEditorPro
 
   const handleEditorMount: OnMount = (editor) => {
     editorRef.current = editor;
+    editor.updateOptions({
+      fontSize: 14,
+      lineHeight: 22,
+      minimap: { enabled: false },
+      padding: { top: 16, bottom: 16 },
+      scrollBeyondLastLine: false,
+    });
 
     editor.onDidChangeCursorSelection(() => {
       syncLocalCursorState();
@@ -657,6 +666,39 @@ export default function CodeEditor({ roomId, roomName, joinCode }: CodeEditorPro
     if (providerRef.current) {
       attachMonacoBinding(providerRef.current);
     }
+  };
+
+  const handleEditorBeforeMount: BeforeMount = (monaco) => {
+    monaco.editor.defineTheme("codecollab-warm", {
+      base: "vs",
+      inherit: true,
+      rules: [
+        { token: "comment", foreground: "897968", fontStyle: "italic" },
+        { token: "keyword", foreground: "B7472C" },
+        { token: "string", foreground: "93651C" },
+        { token: "number", foreground: "B35A32" },
+        { token: "type", foreground: "6D7453" },
+        { token: "delimiter", foreground: "62584D" },
+      ],
+      colors: {
+        "editor.background": "#FFFCF6",
+        "editor.foreground": "#30271F",
+        "editorLineNumber.foreground": "#A99D8D",
+        "editorLineNumber.activeForeground": "#715B48",
+        "editorCursor.foreground": "#E8430F",
+        "editor.selectionBackground": "#F4C19B66",
+        "editor.inactiveSelectionBackground": "#E5D3BC55",
+        "editor.lineHighlightBackground": "#F4EEE5",
+        "editorIndentGuide.background1": "#E8DDCD",
+        "editorIndentGuide.activeBackground1": "#C7AE92",
+        "editorWhitespace.foreground": "#E3D9CA",
+        "editorWidget.background": "#FFFDF8",
+        "editorWidget.border": "#E6DAC9",
+        "editorSuggestWidget.background": "#FFFDF8",
+        "editorSuggestWidget.border": "#E6DAC9",
+        "editorSuggestWidget.foreground": "#34281E",
+      },
+    });
   };
 
   useEffect(() => {
@@ -1171,7 +1213,7 @@ export default function CodeEditor({ roomId, roomName, joinCode }: CodeEditorPro
   };
 
   return (
-    <div className="cc-ide-shell" style={{ padding: "20px" }}>
+    <div className="cc-ide-shell cc-crystal-ide">
       <div
         style={{
           display: "flex",
@@ -1184,6 +1226,8 @@ export default function CodeEditor({ roomId, roomName, joinCode }: CodeEditorPro
         <div className="cc-ide-topbar">
         <div className="cc-ide-title"><span className="cc-brand-mark">C</span><div><strong>CodeCollab</strong><small>Room {roomId} / {files.find((file) => file.id === activeFileId)?.filename ?? "workspace"}</small></div></div>
         <div className="cc-ide-actions">
+        <button className="cc-room-panel-toggle" type="button" aria-controls="room-project-panel" aria-expanded={mobilePanelOpen === "files"} onClick={() => setMobilePanelOpen((panel) => panel === "files" ? null : "files")}>Files &amp; users</button>
+        <button className="cc-room-panel-toggle" type="button" aria-controls="room-chat-panel" aria-expanded={mobilePanelOpen === "chat"} onClick={() => setMobilePanelOpen((panel) => panel === "chat" ? null : "chat")}>Room chat</button>
         <button className="cc-button-primary"
           onClick={() => {
             const newName = `file-${files.length + 1}.py`;
@@ -1239,15 +1283,11 @@ export default function CodeEditor({ roomId, roomName, joinCode }: CodeEditorPro
       )}
 
       <div
-        className="cc-ide-layout"
-        style={{
-          display: "grid",
-          gridTemplateColumns: "260px minmax(0, 1fr)",
-          gap: "20px",
-          alignItems: "start",
-        }}
+        className="cc-ide-layout cc-room-layout"
+        data-mobile-panel={mobilePanelOpen ?? "closed"}
       >
-        <aside className="cc-file-sidebar"
+        <aside className="cc-file-sidebar cc-room-left-panel"
+          id="room-project-panel"
           style={{
             background: "#111827",
             color: "#f9fafb",
@@ -1257,6 +1297,12 @@ export default function CodeEditor({ roomId, roomName, joinCode }: CodeEditorPro
             minHeight: "220px",
           }}
         >
+          <nav className="cc-room-nav" aria-label="Workspace navigation">
+            <Link className="cc-room-nav-link" href="/">Home</Link>
+            <Link className="cc-room-nav-link" href="/?rooms=mine">My Rooms</Link>
+            <Link className="cc-room-nav-link" href="/?rooms=shared">Shared Rooms</Link>
+            <Link className="cc-room-nav-link" href="/settings">Settings</Link>
+          </nav>
           <div className="cc-panel-heading"><strong>Project Files</strong><span className="cc-panel-kicker">{files.length} files</span></div>
           <div style={{ marginTop: "12px", display: "grid", gap: "8px" }}>
             {files.length === 0 ? (
@@ -1269,16 +1315,6 @@ export default function CodeEditor({ roomId, roomName, joinCode }: CodeEditorPro
                     const content = documentsRef.current[file.id]?.text.toString() ?? file.content ?? "";
                     openFile(file.id, content);
                   }}
-                  style={{
-                    width: "100%",
-                    textAlign: "left",
-                    padding: "8px 10px",
-                    borderRadius: "8px",
-                    border: file.id === activeFileId ? "1px solid #60a5fa" : "1px solid #374151",
-                    background: file.id === activeFileId ? "#1d4ed8" : "#1f2937",
-                    color: "#f9fafb",
-                    cursor: "pointer",
-                  }}
                 >
                   {file.filename}
                 </button>
@@ -1286,13 +1322,7 @@ export default function CodeEditor({ roomId, roomName, joinCode }: CodeEditorPro
             )}
           </div>
 
-          <div className="cc-sidebar-panel"
-            style={{
-              marginTop: "20px",
-              paddingTop: "12px",
-              borderTop: "1px solid #374151",
-            }}
-          >
+          <section className="cc-sidebar-panel cc-room-online-panel">
             <strong>Online Users</strong>
             <div style={{ marginTop: "10px", display: "grid", gap: "6px" }}>
               {roomUsers.length === 0 ? (
@@ -1321,77 +1351,7 @@ export default function CodeEditor({ roomId, roomName, joinCode }: CodeEditorPro
                 ))
               )}
             </div>
-          </div>
-
-          <div className="cc-sidebar-panel"
-            style={{
-              marginTop: "20px",
-              paddingTop: "12px",
-              borderTop: "1px solid #374151",
-            }}
-          >
-            <strong>Room Chat</strong>
-            <div
-              style={{
-                marginTop: "10px",
-                display: "grid",
-                gap: "8px",
-                maxHeight: "220px",
-                overflowY: "auto",
-              }}
-            >
-              {chatMessages.length === 0 ? (
-                <span>No messages yet.</span>
-              ) : (
-                chatMessages.map((message) => (
-                  <div key={message.id}>
-                    <strong>{message.username}</strong>
-                    <div style={{ color: "#d1d5db" }}>{message.message}</div>
-                  </div>
-                ))
-              )}
-            </div>
-
-            {typingUsers.length > 0 ? (
-              <div style={{ marginTop: "8px", color: "#93c5fd" }}>
-                {typingUsers.join(", ")} {typingUsers.length === 1 ? "is" : "are"} typing...
-              </div>
-            ) : null}
-
-            <div style={{ marginTop: "10px", display: "grid", gap: "8px" }}>
-              <input
-                value={chatInput}
-                onChange={(event) => {
-                  const nextValue = event.target.value;
-                  setChatInput(nextValue);
-                  socket.emit("typing_status", {
-                    roomId: Number(roomId),
-                    isTyping: nextValue.trim().length > 0,
-                  });
-                }}
-                onBlur={() => {
-                  socket.emit("typing_status", {
-                    roomId: Number(roomId),
-                    isTyping: false,
-                  });
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    handleSendChatMessage();
-                  }
-                }}
-                placeholder="Type a message..."
-                style={{
-                  padding: "8px",
-                  borderRadius: "6px",
-                  border: "1px solid #374151",
-                  background: "#0f172a",
-                  color: "#f9fafb",
-                }}
-              />
-              <button onClick={handleSendChatMessage}>Send</button>
-            </div>
-          </div>
+          </section>
         </aside>
 
         <div className="cc-editor-column">
@@ -1596,7 +1556,8 @@ export default function CodeEditor({ roomId, roomName, joinCode }: CodeEditorPro
               key={activeFileId}
               height="500px"
               language={language}
-              theme="vs-dark"
+              theme="codecollab-warm"
+              beforeMount={handleEditorBeforeMount}
               onMount={handleEditorMount}
             />
           ) : (
@@ -1720,6 +1681,59 @@ export default function CodeEditor({ roomId, roomName, joinCode }: CodeEditorPro
             )}
           </div>
         </div>
+
+        <aside className="cc-room-right-panel" id="room-chat-panel">
+          <section className="cc-room-panel-section cc-room-collaborators">
+            <div className="cc-panel-heading"><strong>Online now</strong><span className="cc-panel-kicker">{participants.length} here</span></div>
+            <div className="cc-room-collaborator-list">
+              {participants.length === 0 ? (
+                <span className="cc-room-muted">Waiting for collaborators…</span>
+              ) : participants.map((participant) => (
+                <div className="cc-room-collaborator" key={participant.clientId}>
+                  <span className="cc-presence-dot" style={{ background: participant.color }} />
+                  <span className="cc-room-collaborator-copy">
+                    <strong>{participant.name}{participant.isCurrentUser ? " (you)" : ""}</strong>
+                    <small>{participant.activeFileName || "In this room"}{participant.cursor ? ` · L${participant.cursor.lineNumber}:C${participant.cursor.column}` : " · idle"}</small>
+                  </span>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section className="cc-room-panel-section cc-room-chat">
+            <div className="cc-panel-heading"><strong>Room Chat</strong><span className="cc-panel-kicker">Live</span></div>
+            <div className="cc-room-chat-messages" aria-live="polite">
+              {chatMessages.length === 0 ? (
+                <span className="cc-room-muted">No messages yet. Start the conversation.</span>
+              ) : chatMessages.map((message) => (
+                <div className="cc-room-chat-message" key={message.id}>
+                  <strong>{message.username}</strong>
+                  <p>{message.message}</p>
+                </div>
+              ))}
+            </div>
+            {typingUsers.length > 0 ? (
+              <div className="cc-room-typing">{typingUsers.join(", ")} {typingUsers.length === 1 ? "is" : "are"} typing…</div>
+            ) : null}
+            <form className="cc-room-chat-form" onSubmit={(event) => { event.preventDefault(); handleSendChatMessage(); }}>
+              <input
+                value={chatInput}
+                onChange={(event) => {
+                  const nextValue = event.target.value;
+                  setChatInput(nextValue);
+                  socket.emit("typing_status", {
+                    roomId: Number(roomId),
+                    isTyping: nextValue.trim().length > 0,
+                  });
+                }}
+                onBlur={() => socket.emit("typing_status", { roomId: Number(roomId), isTyping: false })}
+                placeholder="Write a message…"
+                aria-label="Room chat message"
+              />
+              <button className="cc-chat-send" type="submit" aria-label="Send chat message">↑</button>
+            </form>
+          </section>
+        </aside>
       </div>
     </div>
   );

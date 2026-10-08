@@ -37,6 +37,17 @@ const features = [
 
 export default function Home() {
   const router = useRouter();
+  const roomView = useSyncExternalStore(
+    (onStoreChange) => {
+      window.addEventListener("popstate", onStoreChange);
+      return () => window.removeEventListener("popstate", onStoreChange);
+    },
+    () => {
+      const requestedView = new URLSearchParams(window.location.search).get("rooms");
+      return requestedView === "shared" || requestedView === "mine" ? requestedView : "home";
+    },
+    () => "home"
+  );
   const urlRequestsLogin = useSyncExternalStore(
     (onStoreChange) => {
       window.addEventListener("popstate", onStoreChange);
@@ -53,6 +64,7 @@ export default function Home() {
   const [joinCode, setJoinCode] = useState("");
   const [user, setUser] = useState<User | null>(null);
   const [rooms, setRooms] = useState<Room[]>([]);
+  const [sharedRooms, setSharedRooms] = useState<Room[]>([]);
   const [status, setStatus] = useState("");
   const [copiedRoomId, setCopiedRoomId] = useState<number | null>(null);
   const [membersRoom, setMembersRoom] = useState<Room | null>(null);
@@ -63,6 +75,7 @@ export default function Home() {
   const [deletingRoom, setDeletingRoom] = useState<Room | null>(null);
   const [deleteError, setDeleteError] = useState("");
   const activeMode = mode === "landing" && urlRequestsLogin ? "login" : mode;
+  const dashboardRooms = roomView === "shared" ? sharedRooms : rooms;
 
   const pendingJoinKey = "cc_pending_join_code";
 
@@ -102,7 +115,19 @@ export default function Home() {
         }
 
         const data = await response.json();
-        setUser(data.user ?? null);
+        const currentUser = data.user ?? null;
+        setUser(currentUser);
+        if (currentUser) {
+          const cachedRooms = sessionStorage.getItem(`cc_shared_rooms_${currentUser.id}`);
+          if (cachedRooms) {
+            try {
+              const parsedRooms = JSON.parse(cachedRooms);
+              setSharedRooms(Array.isArray(parsedRooms) ? parsedRooms : []);
+            } catch {
+              sessionStorage.removeItem(`cc_shared_rooms_${currentUser.id}`);
+            }
+          }
+        }
         await loadRooms();
       } catch {
         setStatus("Backend is unavailable.");
@@ -112,7 +137,7 @@ export default function Home() {
     void loadCurrentUser();
   }, []);
 
-  const joinRoomAndRedirect = async (nextJoinCode: string) => {
+  const joinRoomAndRedirect = async (nextJoinCode: string, joiningUserId = user?.id) => {
     const trimmed = nextJoinCode.trim();
     if (!trimmed) {
       setStatus("Enter a room code to join.");
@@ -137,6 +162,22 @@ export default function Home() {
       persistPendingJoin("");
       setJoinCode("");
       setStatus(`Joined ${data.room.name}`);
+      if (joiningUserId && Number(data.room.owner_id) !== Number(joiningUserId)) {
+        const storageKey = `cc_shared_rooms_${joiningUserId}`;
+        let cachedRooms: Room[] = [];
+        try {
+          const storedRooms = sessionStorage.getItem(storageKey);
+          cachedRooms = storedRooms ? JSON.parse(storedRooms) as Room[] : [];
+        } catch {
+          cachedRooms = [];
+        }
+        const nextSharedRooms = [
+          ...cachedRooms.filter((room) => Number(room.id) !== Number(data.room.id)),
+          { id: data.room.id, name: data.room.name, owner_id: data.room.owner_id },
+        ];
+        sessionStorage.setItem(storageKey, JSON.stringify(nextSharedRooms));
+        setSharedRooms(nextSharedRooms);
+      }
       router.push(`/room/${data.room.id}`);
     } catch {
       setStatus("Could not connect to the backend.");
@@ -183,7 +224,7 @@ export default function Home() {
 
       const pendingCode = typeof window !== "undefined" ? sessionStorage.getItem(pendingJoinKey) : null;
       if (pendingCode) {
-        await joinRoomAndRedirect(pendingCode);
+        await joinRoomAndRedirect(pendingCode, Number(data.user.id));
         return;
       }
 
@@ -221,7 +262,8 @@ export default function Home() {
 
       const meResponse = await fetch(`${API_BASE_URL}/api/me`, { credentials: "include" });
       if (meResponse.ok) {
-        await joinRoomAndRedirect(trimmed);
+        const meData = await meResponse.json();
+        await joinRoomAndRedirect(trimmed, Number(meData.user.id));
         return;
       }
 
@@ -276,6 +318,7 @@ export default function Home() {
 
     setUser(null);
     setRooms([]);
+    setSharedRooms([]);
     persistPendingJoin("");
     setStatus("Signed out.");
     router.push("/");
@@ -457,6 +500,7 @@ export default function Home() {
             <label className="cc-entry-code-field">
               <span aria-hidden="true">⌘</span>
               <input
+                id="dashboard-join-code"
                 value={joinCode}
                 onChange={(event) => setJoinCode(event.target.value)}
                 placeholder="Room code"
@@ -573,13 +617,13 @@ export default function Home() {
 
         <div className="cc-sidebar-section">
           <span className="cc-sidebar-label">Workspace</span>
-          <button className="cc-sidebar-link cc-sidebar-link-active" type="button">⌂ <span>Home</span></button>
-          <button className="cc-sidebar-link" type="button">▦ <span>My Rooms</span><b>{rooms.length}</b></button>
-          <button className="cc-sidebar-link" type="button">◌ <span>Shared Rooms</span></button>
+          <Link className={`cc-sidebar-link ${roomView === "home" ? "cc-sidebar-link-active" : ""}`} href="/">⌂ <span>Home</span></Link>
+          <Link className={`cc-sidebar-link ${roomView === "mine" ? "cc-sidebar-link-active" : ""}`} href="/?rooms=mine">▦ <span>My Rooms</span><b>{rooms.length}</b></Link>
+          <Link className={`cc-sidebar-link ${roomView === "shared" ? "cc-sidebar-link-active" : ""}`} href="/?rooms=shared">◌ <span>Shared Rooms</span><b>{sharedRooms.length}</b></Link>
         </div>
 
         <div className="cc-sidebar-bottom">
-          <button className="cc-sidebar-link" type="button">⚙ <span>Settings</span></button>
+          <Link className="cc-sidebar-link" href="/settings">⚙ <span>Settings</span></Link>
           <div className="cc-user-chip">
             <span className="cc-avatar">{user?.username.slice(0, 1).toUpperCase()}</span>
             <span>
@@ -628,24 +672,28 @@ export default function Home() {
           <div className="cc-section-heading">
             <div>
               <span className="cc-sidebar-label">Your rooms</span>
-              <h2>Active workspaces</h2>
+              <h2>{roomView === "shared" ? "Shared workspaces" : roomView === "mine" ? "My workspaces" : "Active workspaces"}</h2>
             </div>
-            <span className="cc-room-count">{rooms.length} {rooms.length === 1 ? "room" : "rooms"}</span>
+            <span className="cc-room-count">{dashboardRooms.length} {dashboardRooms.length === 1 ? "room" : "rooms"}</span>
           </div>
 
-          {rooms.length === 0 ? (
+          {dashboardRooms.length === 0 ? (
             <div className="cc-empty-state">
               <div className="cc-empty-icon">＋</div>
-              <h3>Your workspace is quiet.</h3>
-              <p>Create your first room and bring the code in.</p>
-              <form onSubmit={handleCreateRoom}>
-                <input value={roomName} onChange={(event) => setRoomName(event.target.value)} placeholder="Room name" />
-                <button className="cc-button-primary" type="submit">Create your first room</button>
-              </form>
+              <h3>{roomView === "shared" ? "No shared rooms on this device yet." : "Your workspace is quiet."}</h3>
+              <p>{roomView === "shared" ? "Join a room with its code to see it here during this session." : "Create your first room and bring the code in."}</p>
+              {roomView === "shared" ? (
+                <button className="cc-button-primary" type="button" onClick={() => document.getElementById("dashboard-join-code")?.focus()}>Enter a room code</button>
+              ) : (
+                <form onSubmit={handleCreateRoom}>
+                  <input value={roomName} onChange={(event) => setRoomName(event.target.value)} placeholder="Room name" />
+                  <button className="cc-button-primary" type="submit">Create your first room</button>
+                </form>
+              )}
             </div>
           ) : (
             <div className="cc-room-grid">
-              {rooms.map((room, index) => (
+              {dashboardRooms.map((room, index) => (
                 <div className="cc-room-card" key={room.id}>
                   <div className="cc-room-card-top">
                     <span className="cc-room-index">{String(index + 1).padStart(2, "0")}</span>

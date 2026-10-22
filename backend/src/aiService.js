@@ -1,5 +1,5 @@
-const { geminiApiKey } = require("./config/env");
-const { GoogleGenAI } = require("@google/genai");
+﻿const { groqApiKey } = require("./config/env");
+const Groq = require("groq-sdk");
 
 function buildAiContext({
   currentFile,
@@ -120,9 +120,7 @@ async function generateAiReply({
   projectFiles,
   model,
 }) {
-  const apiKey = geminiApiKey;
-
-  if (!apiKey) {
+  if (!groqApiKey) {
     return {
       success: true,
       mode: "fallback",
@@ -131,30 +129,43 @@ async function generateAiReply({
   }
 
   try {
-    const ai = new GoogleGenAI({ apiKey });
-    const response = await ai.models.generateContent({
-      model: model || "gemini-2.5-flash",
-      contents: buildAiContext({
-        currentFile,
-        language,
-        selectedCode,
-        projectFiles,
-        prompt,
-      }),
-      config: {
-        systemInstruction: "You are a helpful coding assistant for a collaborative IDE. Keep responses concise, practical, and safe. Use fenced code blocks with the relevant language when returning code.",
-        temperature: 0.3,
-        maxOutputTokens: 400,
-      },
+    const groq = new Groq({ apiKey: groqApiKey });
+
+    const response = await groq.chat.completions.create({
+      model: model || "openai/gpt-oss-20b",
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are a helpful coding assistant for a collaborative IDE. Keep responses concise, practical, and safe. Use fenced code blocks with the relevant language when returning code.",
+        },
+        {
+          role: "user",
+          content: buildAiContext({
+            currentFile,
+            language,
+            selectedCode,
+            projectFiles,
+            prompt,
+          }),
+        },
+      ],
+      temperature: 0.3,
+      max_tokens: 400,
     });
-    const message = response.text || "";
+
+    const message = response.choices?.[0]?.message?.content || "";
 
     return {
       success: true,
       mode: "live",
-      reply: message || getFallbackReply({ prompt, currentFile, selectedCode, language }),
+      reply:
+        message ||
+        getFallbackReply({ prompt, currentFile, selectedCode, language }),
     };
   } catch (error) {
+    console.error("Groq AI request failed:", error.message);
+
     return {
       success: false,
       mode: "error",
@@ -168,3 +179,5 @@ module.exports = {
   generateAiReply,
   getFallbackReply,
 };
+
+
